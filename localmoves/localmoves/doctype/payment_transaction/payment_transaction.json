@@ -1,0 +1,228 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:PAY-{#####}",
+ "creation": "2025-11-27 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "request_info_section",
+  "request_id",
+  "company_name",
+  "user_email",
+  "column_break_4",
+  "payment_status",
+  "currency",
+  "payment_method",
+  "amounts_section",
+  "total_amount",
+  "deposit_amount",
+  "remaining_amount",
+  "column_break_amounts",
+  "deposit_status",
+  "balance_status",
+  "transaction_details_section",
+  "deposit_transaction_ref",
+  "balance_transaction_ref",
+  "column_break_trans",
+  "deposit_paid_at",
+  "balance_paid_at",
+  "fully_paid_at",
+  "gateway_section",
+  "gateway_response",
+  "timestamps_section",
+  "created_at",
+  "updated_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "request_info_section",
+   "fieldtype": "Section Break",
+   "label": "Request Information"
+  },
+  {
+   "fieldname": "request_id",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Logistics Request",
+   "options": "Logistics Request",
+   "reqd": 1
+  },
+  {
+   "fieldname": "company_name",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Logistics Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "user_email",
+   "fieldtype": "Data",
+   "label": "User Email",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_4",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "payment_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Overall Payment Status",
+   "options": "Pending\nPaid\nFully Paid\nRefunded\nFailed",
+   "reqd": 1
+  },
+  {
+   "default": "GBP",
+   "fieldname": "currency",
+   "fieldtype": "Select",
+   "label": "Currency",
+   "options": "GBP\nUSD\nEUR\nINR",
+   "reqd": 1
+  },
+  {
+   "fieldname": "payment_method",
+   "fieldtype": "Select",
+   "label": "Payment Method",
+   "options": "\nStripe\nRazorpay\nPayPal\nBank Transfer"
+  },
+  {
+   "fieldname": "amounts_section",
+   "fieldtype": "Section Break",
+   "label": "Payment Amounts"
+  },
+  {
+   "fieldname": "total_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Total Amount",
+   "reqd": 1
+  },
+  {
+   "fieldname": "deposit_amount",
+   "fieldtype": "Currency",
+   "label": "Deposit Amount (10%)",
+   "reqd": 1
+  },
+  {
+   "fieldname": "remaining_amount",
+   "fieldtype": "Currency",
+   "label": "Remaining Balance",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_amounts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Unpaid",
+   "fieldname": "deposit_status",
+   "fieldtype": "Select",
+   "label": "Deposit Status",
+   "options": "Unpaid\nPaid\nRefunded",
+   "reqd": 1
+  },
+  {
+   "default": "Unpaid",
+   "fieldname": "balance_status",
+   "fieldtype": "Select",
+   "label": "Balance Status",
+   "options": "Unpaid\nPaid\nRefunded",
+   "reqd": 1
+  },
+  {
+   "fieldname": "transaction_details_section",
+   "fieldtype": "Section Break",
+   "label": "Transaction Details"
+  },
+  {
+   "fieldname": "deposit_transaction_ref",
+   "fieldtype": "Data",
+   "label": "Deposit Transaction Reference"
+  },
+  {
+   "fieldname": "balance_transaction_ref",
+   "fieldtype": "Data",
+   "label": "Balance Transaction Reference"
+  },
+  {
+   "fieldname": "column_break_trans",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "deposit_paid_at",
+   "fieldtype": "Datetime",
+   "label": "Deposit Paid At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "balance_paid_at",
+   "fieldtype": "Datetime",
+   "label": "Balance Paid At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "fully_paid_at",
+   "fieldtype": "Datetime",
+   "label": "Fully Paid At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "gateway_section",
+   "fieldtype": "Section Break",
+   "label": "Payment Gateway Response"
+  },
+  {
+   "fieldname": "gateway_response",
+   "fieldtype": "Long Text",
+   "label": "Gateway Response (JSON)"
+  },
+  {
+   "fieldname": "timestamps_section",
+   "fieldtype": "Section Break",
+   "label": "Timestamps"
+  },
+  {
+   "fieldname": "created_at",
+   "fieldtype": "Datetime",
+   "label": "Created At",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "updated_at",
+   "fieldtype": "Datetime",
+   "label": "Updated At",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-11-27 14:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Localmoves",
+ "name": "Payment Transaction",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

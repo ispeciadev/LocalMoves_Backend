@@ -1,0 +1,496 @@
+{
+  "actions": [],
+  "allow_rename": 1,
+  "autoname": "field:company_name",
+  "creation": "2024-11-01 10:00:00.000000",
+  "doctype": "DocType",
+  "editable_grid": 1,
+  "engine": "InnoDB",
+  "field_order": [
+    "company_details_section",
+    "company_name",
+    "manager_email",
+    "phone",
+    "personal_contact_name",
+    "column_break_4",
+    "pincode",
+    "location",
+    "address",
+    "section_break_areas",
+    "areas_covered",
+    "section_break_gallery",
+    "company_gallery",
+    "section_break_8",
+    "description",
+    "services_offered",
+    "section_break_includes",
+    "includes",
+    "material",
+    "column_break_includes",
+    "protection",
+    "furniture",
+    "appliances",
+    "section_break_fleet",
+    "swb_van_quantity",
+    "swb_van_images",
+    "mwb_van_quantity",
+    "mwb_van_images",
+    "lwb_van_quantity",
+    "lwb_van_images",
+    "xlwb_van_quantity",
+    "xlwb_van_images",
+    "column_break_fleet",
+    "mwb_luton_van_quantity",
+    "mwb_luton_van_images",
+    "lwb_luton_van_quantity",
+    "lwb_luton_van_images",
+    "tonne_7_5_lorry_quantity",
+    "tonne_7_5_lorry_images",
+    "tonne_12_lorry_quantity",
+    "tonne_12_lorry_images",
+    "tonne_18_lorry_quantity",
+    "tonne_18_lorry_images",
+    "section_break_fleet_summary",
+    "total_carrying_capacity",
+    "section_break_pricing",
+    "loading_cost_per_m3",
+    "packing_cost_per_box",
+    "column_break_pricing",
+    "assembly_cost_per_item",
+    "disassembly_cost_per_item",
+    "column_break_mileage",
+    "cost_per_mile_under_25",
+    "cost_per_mile_over_25",
+    "section_break_subscription",
+    "subscription_plan",
+    "subscription_start_date",
+    "subscription_end_date",
+    "column_break_subscription",
+    "requests_viewed_this_month",
+    "is_active",
+    "section_break_12",
+    "created_at",
+    "updated_at"
+  ],
+  "fields": [
+    {
+      "fieldname": "company_details_section",
+      "fieldtype": "Section Break",
+      "label": "Company Details"
+    },
+    {
+      "fieldname": "company_name",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "label": "Company Name",
+      "reqd": 1,
+      "unique": 1
+    },
+    {
+      "fieldname": "manager_email",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "label": "Manager Email",
+      "options": "LocalMoves User",
+      "reqd": 1
+    },
+    {
+      "fieldname": "phone",
+      "fieldtype": "Data",
+      "label": "Phone",
+      "reqd": 1
+    },
+    {
+      "fieldname": "personal_contact_name",
+      "fieldtype": "Data",
+      "label": "Personal Contact Name"
+    },
+    {
+      "fieldname": "column_break_4",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "pincode",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "label": "Primary Pincode",
+      "reqd": 1
+    },
+    {
+      "fieldname": "location",
+      "fieldtype": "Data",
+      "label": "Location",
+      "reqd": 1
+    },
+    {
+      "fieldname": "address",
+      "fieldtype": "Small Text",
+      "label": "Address",
+      "reqd": 1
+    },
+    {
+      "fieldname": "section_break_areas",
+      "fieldtype": "Section Break",
+      "label": "Service Areas"
+    },
+    {
+      "fieldname": "areas_covered",
+      "fieldtype": "Long Text",
+      "label": "Areas Covered (JSON Array)",
+      "description": "JSON array of pincodes: [\"12345\", \"67890\"]"
+    },
+    {
+      "fieldname": "section_break_gallery",
+      "fieldtype": "Section Break",
+      "label": "Gallery"
+    },
+    {
+      "fieldname": "company_gallery",
+      "fieldtype": "Long Text",
+      "label": "Company Gallery (JSON Array)",
+      "description": "JSON array of image/video URLs"
+    },
+    {
+      "fieldname": "section_break_8",
+      "fieldtype": "Section Break",
+      "label": "Additional Information"
+    },
+    {
+      "fieldname": "description",
+      "fieldtype": "Text Editor",
+      "label": "Description"
+    },
+    {
+      "fieldname": "services_offered",
+      "fieldtype": "Small Text",
+      "label": "Services Offered"
+    },
+    {
+      "fieldname": "section_break_includes",
+      "fieldtype": "Section Break",
+      "label": "Includes"
+    },
+    {
+      "fieldname": "includes",
+      "fieldtype": "Long Text",
+      "label": "Includes (JSON Array)"
+    },
+    {
+      "fieldname": "material",
+      "fieldtype": "Long Text",
+      "label": "Material (JSON Array)"
+    },
+    {
+      "fieldname": "column_break_includes",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "protection",
+      "fieldtype": "Long Text",
+      "label": "Protection (JSON Array)"
+    },
+    {
+      "fieldname": "furniture",
+      "fieldtype": "Long Text",
+      "label": "Furniture (JSON Array)"
+    },
+    {
+      "fieldname": "appliances",
+      "fieldtype": "Long Text",
+      "label": "Appliances (JSON Array)"
+    },
+    {
+      "fieldname": "section_break_fleet",
+      "fieldtype": "Section Break",
+      "label": "Fleet & Vehicles"
+    },
+    {
+      "fieldname": "swb_van_quantity",
+      "fieldtype": "Int",
+      "label": "SWB Van Quantity (5m³ each)",
+      "default": "0",
+      "description": "Number of SWB vans owned"
+    },
+    {
+      "fieldname": "swb_van_images",
+      "fieldtype": "Long Text",
+      "label": "SWB Van Images (JSON Array)"
+    },
+    {
+      "fieldname": "mwb_van_quantity",
+      "fieldtype": "Int",
+      "label": "MWB Van Quantity (8m³ each)",
+      "default": "0"
+    },
+    {
+      "fieldname": "mwb_van_images",
+      "fieldtype": "Long Text",
+      "label": "MWB Van Images (JSON Array)"
+    },
+    {
+      "fieldname": "lwb_van_quantity",
+      "fieldtype": "Int",
+      "label": "LWB Van Quantity (11m³ each)",
+      "default": "0"
+    },
+    {
+      "fieldname": "lwb_van_images",
+      "fieldtype": "Long Text",
+      "label": "LWB Van Images (JSON Array)"
+    },
+    {
+      "fieldname": "xlwb_van_quantity",
+      "fieldtype": "Int",
+      "label": "XLWB Van Quantity (13m³ each)",
+      "default": "0"
+    },
+    {
+      "fieldname": "xlwb_van_images",
+      "fieldtype": "Long Text",
+      "label": "XLWB Van Images (JSON Array)"
+    },
+    {
+      "fieldname": "column_break_fleet",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "mwb_luton_van_quantity",
+      "fieldtype": "Int",
+      "label": "MWB Luton Van Quantity (17m³ each)",
+      "default": "0"
+    },
+    {
+      "fieldname": "mwb_luton_van_images",
+      "fieldtype": "Long Text",
+      "label": "MWB Luton Van Images (JSON Array)"
+    },
+    {
+      "fieldname": "lwb_luton_van_quantity",
+      "fieldtype": "Int",
+      "label": "LWB Luton Van Quantity (19m³ each)",
+      "default": "0"
+    },
+    {
+      "fieldname": "lwb_luton_van_images",
+      "fieldtype": "Long Text",
+      "label": "LWB Luton Van Images (JSON Array)"
+    },
+    {
+      "fieldname": "tonne_7_5_lorry_quantity",
+      "fieldtype": "Int",
+      "label": "7.5 Tonne Lorry Quantity (30m³ each)",
+      "default": "0"
+    },
+    {
+      "fieldname": "tonne_7_5_lorry_images",
+      "fieldtype": "Long Text",
+      "label": "7.5 Tonne Lorry Images (JSON Array)"
+    },
+    {
+      "fieldname": "tonne_12_lorry_quantity",
+      "fieldtype": "Int",
+      "label": "12 Tonne Lorry Quantity (45m³ each)",
+      "default": "0"
+    },
+    {
+      "fieldname": "tonne_12_lorry_images",
+      "fieldtype": "Long Text",
+      "label": "12 Tonne Lorry Images (JSON Array)"
+    },
+    {
+      "fieldname": "tonne_18_lorry_quantity",
+      "fieldtype": "Int",
+      "label": "18 Tonne Lorry Quantity (55m³ each)",
+      "default": "0"
+    },
+    {
+      "fieldname": "tonne_18_lorry_images",
+      "fieldtype": "Long Text",
+      "label": "18 Tonne Lorry Images (JSON Array)"
+    },
+    {
+      "fieldname": "section_break_fleet_summary",
+      "fieldtype": "Section Break",
+      "label": "Fleet Summary"
+    },
+    {
+      "fieldname": "total_carrying_capacity",
+      "fieldtype": "Float",
+      "label": "Total Carrying Capacity (m³)",
+      "read_only": 1,
+      "precision": "2",
+      "description": "Auto-calculated: Sum of (quantity × capacity) for all vehicles"
+    },
+    {
+      "fieldname": "section_break_pricing",
+      "fieldtype": "Section Break",
+      "label": "Manager Pricing"
+    },
+    {
+      "fieldname": "loading_cost_per_m3",
+      "fieldtype": "Currency",
+      "label": "Loading Cost per m³ (£)",
+      "description": "How much to charge for loading 1 m³ of goods"
+    },
+    {
+      "fieldname": "packing_cost_per_box",
+      "fieldtype": "Currency",
+      "label": "Packing Cost per Box (£)",
+      "description": "How much to charge for packing 1 box (e.g., 15 boxes)"
+    },
+    {
+      "fieldname": "column_break_pricing",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "assembly_cost_per_item",
+      "fieldtype": "Currency",
+      "label": "Assembly Cost per Item (£)",
+      "description": "How much to charge for assembling 1 furniture item (e.g., 1 wardrobe)"
+    },
+    {
+      "fieldname": "disassembly_cost_per_item",
+      "fieldtype": "Currency",
+      "label": "Disassembly Cost per Item (£)",
+      "description": "Leave blank → auto-set to 50% of assembly cost"
+    },
+    {
+      "fieldname": "column_break_mileage",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "cost_per_mile_under_25",
+      "fieldtype": "Currency",
+      "label": "Cost per Mile (<25 miles) £",
+      "description": "e.g., £0.20 per mile"
+    },
+    {
+      "fieldname": "cost_per_mile_over_25",
+      "fieldtype": "Currency",
+      "label": "Cost per Mile (≥25 miles) £",
+      "description": "e.g., £0.30 per mile"
+    },
+    {
+      "fieldname": "section_break_subscription",
+      "fieldtype": "Section Break",
+      "label": "Subscription Details"
+    },
+    {
+      "default": "Free",
+      "fieldname": "subscription_plan",
+      "fieldtype": "Select",
+      "in_list_view": 1,
+      "label": "Subscription Plan",
+      "options": "Free\nBasic\nStandard\nPremium"
+    },
+    {
+      "fieldname": "subscription_start_date",
+      "fieldtype": "Date",
+      "label": "Subscription Start Date"
+    },
+    {
+      "fieldname": "subscription_end_date",
+      "fieldtype": "Date",
+      "label": "Subscription End Date"
+    },
+    {
+      "fieldname": "column_break_subscription",
+      "fieldtype": "Column Break"
+    },
+    {
+      "default": "0",
+      "fieldname": "requests_viewed_this_month",
+      "fieldtype": "Int",
+      "label": "Requests Viewed This Month",
+      "read_only": 1
+    },
+    {
+      "default": "1",
+      "fieldname": "is_active",
+      "fieldtype": "Check",
+      "in_list_view": 1,
+      "label": "Is Active"
+    },
+    {
+      "fieldname": "section_break_12",
+      "fieldtype": "Section Break",
+      "label": "Timestamps"
+    },
+    {
+      "fieldname": "created_at",
+      "fieldtype": "Datetime",
+      "label": "Created At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "updated_at",
+      "fieldtype": "Datetime",
+      "label": "Updated At",
+      "read_only": 1
+    },
+    {
+        "fieldname": "rating_section",
+        "fieldtype": "Section Break",
+        "label": "Ratings & Reviews",
+        "insert_after": "is_active"
+      },
+      {
+        "fieldname": "average_rating",
+        "fieldtype": "Float",
+        "label": "Average Rating",
+        "precision": "2",
+        "default": "0",
+        "read_only": 1,
+        "in_list_view": 1,
+        "description": "Average customer rating (calculated automatically)",
+        "insert_after": "rating_section"
+      },
+      {
+        "fieldname": "total_ratings",
+        "fieldtype": "Int",
+        "label": "Total Ratings",
+        "default": "0",
+        "read_only": 1,
+        "description": "Total number of ratings received",
+        "insert_after": "average_rating"
+      }
+  ],
+  "index_web_pages_for_search": 1,
+  "links": [],
+  "modified": "2024-11-20 10:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "Localmoves",
+  "name": "Logistics Company",
+  "naming_rule": "By fieldname",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "System Manager",
+      "share": 1,
+      "write": 1
+    },
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "Logistics Manager",
+      "share": 0,
+      "write": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "states": [],
+  "track_changes": 1
+}

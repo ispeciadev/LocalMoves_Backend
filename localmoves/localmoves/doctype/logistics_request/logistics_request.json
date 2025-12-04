@@ -1,0 +1,450 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:REQ-{#####}",
+ "creation": "2024-10-30 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "user_details_section",
+  "user_email",
+  "full_name",
+  "email",
+  "phone",
+  "property_size",
+  "column_break_4",
+  "pickup_pincode",
+  "pickup_address",
+  "pickup_city",
+  "section_break_8",
+  "delivery_pincode",
+  "delivery_address",
+  "delivery_city",
+  "column_break_12",
+  "delivery_date",
+  "service_type",
+  "section_break_15",
+  "item_description",
+  "special_instructions",
+  "section_break_20",
+  "company_name",
+  "company_email",
+  "column_break_23",
+  "estimated_cost",
+  "actual_cost",
+  "section_break_26",
+  "status",
+  "priority",
+  "column_break_29",
+  "assigned_to",
+  "assigned_date",
+  "previously_assigned_to",
+  "section_break_32",
+  "notes",
+  "admin_notes",
+  "section_break_35",
+  "created_at",
+  "updated_at",
+  "completed_at",
+  "payment_section",
+  "payment_id",
+  "payment_gateway",
+  "payment_status",
+  "column_break_payment",
+  "total_amount",
+  "deposit_paid",
+  "remaining_amount",
+  "payment_verified_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "user_details_section",
+   "fieldtype": "Section Break",
+   "label": "User Details"
+  },
+  {
+   "fieldname": "user_email",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "User Email",
+   "options": "LocalMoves User",
+   "reqd": 1
+  },
+  {
+   "fieldname": "full_name",
+   "fieldtype": "Data",
+   "label": "Full Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "email",
+   "fieldtype": "Data",
+   "label": "Email",
+   "reqd": 1
+  },
+  {
+   "fieldname": "phone",
+   "fieldtype": "Data",
+   "label": "Phone Number",
+   "reqd": 1
+  },
+  {
+   "fieldname": "property_size",
+   "fieldtype": "JSON",
+   "label": "Property Size (Array Input)"
+  },
+  {
+   "fieldname": "column_break_4",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "pickup_pincode",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Pickup Pincode",
+   "reqd": 1
+  },
+  {
+   "fieldname": "pickup_address",
+   "fieldtype": "Small Text",
+   "label": "Pickup Address"
+  },
+  {
+   "fieldname": "pickup_city",
+   "fieldtype": "Data",
+   "label": "Pickup City"
+  },
+  {
+   "fieldname": "section_break_8",
+   "fieldtype": "Section Break",
+   "label": "Delivery Details"
+  },
+  {
+   "fieldname": "delivery_pincode",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Delivery Pincode",
+   "reqd": 1
+  },
+  {
+   "fieldname": "delivery_address",
+   "fieldtype": "Small Text",
+   "label": "Delivery Address"
+  },
+  {
+   "fieldname": "delivery_city",
+   "fieldtype": "Data",
+   "label": "Delivery City"
+  },
+  {
+   "fieldname": "column_break_12",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "delivery_date",
+   "fieldtype": "Date",
+   "label": "Preferred Delivery Date"
+  },
+  {
+   "fieldname": "service_type",
+   "fieldtype": "Select",
+   "label": "Service Type",
+   "options": "Standard\nExpress\nSame Day\nScheduled"
+  },
+  {
+   "fieldname": "section_break_15",
+   "fieldtype": "Section Break",
+   "label": "Item Details"
+  },
+  {
+   "fieldname": "item_description",
+   "fieldtype": "Text Editor",
+   "label": "Item Description"
+  },
+  {
+   "fieldname": "special_instructions",
+   "fieldtype": "Small Text",
+   "label": "Special Instructions"
+  },
+  {
+   "fieldname": "section_break_20",
+   "fieldtype": "Section Break",
+   "label": "Company Assignment"
+  },
+  {
+   "fieldname": "company_name",
+   "fieldtype": "Link",
+   "label": "Assigned Company",
+   "options": "Logistics Company"
+  },
+  {
+   "fetch_from": "company_name.manager_email",
+   "fieldname": "company_email",
+   "fieldtype": "Data",
+   "label": "Company Manager Email",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_23",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "estimated_cost",
+   "fieldtype": "Currency",
+   "label": "Estimated Cost"
+  },
+  {
+   "fieldname": "actual_cost",
+   "fieldtype": "Currency",
+   "label": "Actual Cost"
+  },
+  {
+   "fieldname": "section_break_26",
+   "fieldtype": "Section Break",
+   "label": "Status & Assignment"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Pending\nAssigned\nAccepted\nIn Progress\nCompleted\nCancelled\nRejected",
+   "reqd": 1
+  },
+  {
+   "default": "Medium",
+   "fieldname": "priority",
+   "fieldtype": "Select",
+   "label": "Priority",
+   "options": "Low\nMedium\nHigh\nUrgent"
+  },
+  {
+   "fieldname": "column_break_29",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "assigned_to",
+   "fieldtype": "Data",
+   "label": "Assigned To"
+  },
+  {
+   "fieldname": "assigned_date",
+   "fieldtype": "Datetime",
+   "label": "Assigned Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "previously_assigned_to",
+   "fieldtype": "Link",
+   "label": "Previously Assigned To",
+   "options": "Logistics Company",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "section_break_32",
+   "fieldtype": "Section Break",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Text Editor",
+   "label": "Manager Notes"
+  },
+  {
+   "fieldname": "admin_notes",
+   "fieldtype": "Text Editor",
+   "label": "Admin Notes"
+  },
+  {
+   "fieldname": "section_break_35",
+   "fieldtype": "Section Break",
+   "label": "Timestamps"
+  },
+  {
+   "fieldname": "created_at",
+   "fieldtype": "Datetime",
+   "label": "Created At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "updated_at",
+   "fieldtype": "Datetime",
+   "label": "Updated At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "completed_at",
+   "fieldtype": "Datetime",
+   "label": "Completed At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pricing_data",
+   "label": "Pricing Data",
+   "fieldtype": "Long Text",
+   "description": "JSON data for pricing calculations"
+  },
+  {
+   "fieldname": "collection_assessment",
+   "label": "Collection Assessment",
+   "fieldtype": "Long Text",
+   "description": "JSON data for pickup location assessment"
+  },
+  {
+   "fieldname": "delivery_assessment",
+   "label": "Delivery Assessment",
+   "fieldtype": "Long Text",
+   "description": "JSON data for delivery location assessment"
+  },
+  {
+   "fieldname": "move_date_data",
+   "label": "Move Date Data",
+   "fieldtype": "Long Text",
+   "description": "JSON data for move date preferences"
+  },
+  {
+   "fieldname": "distance_miles",
+   "label": "Distance (Miles)",
+   "fieldtype": "Float",
+   "default": 0
+  },
+  {
+   "fieldname": "price_breakdown",
+   "label": "Price Breakdown",
+   "fieldtype": "Long Text",
+   "description": "Complete pricing breakdown JSON"
+  },
+  {
+   "fieldname": "payment_section",
+   "fieldtype": "Section Break",
+   "label": "Payment Information"
+  },
+  {
+   "fieldname": "payment_id",
+   "fieldtype": "Link",
+   "label": "Payment Transaction",
+   "options": "Payment Transaction",
+   "read_only": 1
+  },
+  {
+   "fieldname": "payment_gateway",
+   "fieldtype": "Select",
+   "label": "Payment Gateway",
+   "options": "\nStripe\nRazorpay\nPayPal",
+   "read_only": 1
+  },
+  {
+   "fieldname": "payment_status",
+   "fieldtype": "Select",
+   "label": "Payment Status",
+   "options": "Pending\nPaid\nFully Paid\nFailed",
+   "default": "Pending",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_payment",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_amount",
+   "fieldtype": "Currency",
+   "label": "Total Amount",
+   "read_only": 1
+  },
+  {
+   "fieldname": "deposit_paid",
+   "fieldtype": "Currency",
+   "label": "Deposit Paid (10%)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "remaining_amount",
+   "fieldtype": "Currency",
+   "label": "Remaining Balance",
+   "read_only": 1
+  },
+  {
+   "fieldname": "payment_verified_at",
+   "fieldtype": "Datetime",
+   "label": "Payment Verified At",
+   "read_only": 1
+  },
+  {
+        "fieldname": "rating_section",
+        "fieldtype": "Section Break",
+        "label": "Rating & Review",
+        "insert_after": "completed_at"
+      },
+      {
+        "fieldname": "rating",
+        "fieldtype": "Int",
+        "label": "Rating (1-5)",
+        "default": "0",
+        "in_list_view": 1,
+        "description": "Customer rating for this request",
+        "insert_after": "rating_section"
+      },
+      {
+        "fieldname": "review_comment",
+        "fieldtype": "Text Editor",
+        "label": "Review Comment",
+        "description": "Customer's detailed review",
+        "insert_after": "rating"
+      },
+      {
+        "fieldname": "service_aspects",
+        "fieldtype": "Long Text",
+        "label": "Service Aspects (JSON)",
+        "description": "Detailed ratings for different service aspects",
+        "insert_after": "review_comment"
+      },
+      {
+        "fieldname": "column_break_rating",
+        "fieldtype": "Column Break",
+        "insert_after": "service_aspects"
+      },
+      {
+        "fieldname": "rated_at",
+        "fieldtype": "Datetime",
+        "label": "Rated At",
+        "read_only": 1,
+        "insert_after": "column_break_rating"
+      },
+      {
+        "fieldname": "rating_updated_at",
+        "fieldtype": "Datetime",
+        "label": "Rating Updated At",
+        "read_only": 1,
+        "insert_after": "rated_at"
+      }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-11-27 14:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Localmoves",
+ "name": "Logistics Request",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

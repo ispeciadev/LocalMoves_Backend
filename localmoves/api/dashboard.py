@@ -1,0 +1,4004 @@
+# dashboard.py
+
+import frappe
+from frappe import _
+from localmoves.utils.jwt_handler import get_current_user
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
+import json
+from functools import wraps
+
+def ignore_csrf(fn):
+    """Decorator to bypass CSRF check for API endpoints"""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        frappe.flags.ignore_csrf_check = True
+        return fn(*args, **kwargs)
+    return wrapper
+
+# ===== HELPER FUNCTIONS =====
+
+def ensure_session_data():
+    """Ensure frappe.session.data exists to prevent AttributeError during save operations"""
+    if not hasattr(frappe.session, 'data') or frappe.session.data is None:
+        frappe.session.data = {}
+
+
+def check_admin_permission():
+    """Check if current user has admin permissions"""
+    user = frappe.session.user
+    if user == "Administrator":
+        return True
+    
+    user_roles = frappe.get_roles(user)
+    
+    if "System User" in user_roles:
+        return True
+    
+    if frappe.db.exists("LocalMoves User", {"role": "Admin"}):
+        return True
+    
+    has_permission = frappe.has_permission(
+        doctype="LocalMoves User",
+        ptype="write",
+        user=user
+    )
+    
+    if has_permission:
+        return True
+    
+    return False
+
+
+def get_request_data():
+    """Helper function to get request data from either JSON or form_dict"""
+    try:
+        if not frappe.request:
+            return frappe.local.form_dict or {}
+        
+        content_type = frappe.get_request_header("Content-Type") or ""
+        
+        if "application/json" in content_type:
+            try:
+                json_data = frappe.request.get_json()
+                if json_data:
+                    return json_data
+            except Exception as e:
+                frappe.log_error(title="JSON Parse Error", message=str(e))
+        
+        return frappe.local.form_dict or {}
+    
+    except Exception as e:
+        frappe.log_error(title="Request Data Error", message=str(e))
+        return {}
+
+# ===== USER CRUD OPERATIONS =====
+
+@frappe.whitelist()
+def create_request():
+    """Create a new logistics request"""
+    try:
+        ensure_session_data()
+        
+        data = get_request_data()
+        
+        request_doc = frappe.new_doc('Logistics Request')
+        request_doc.user_email = data.get('user_email')
+        request_doc.user_name = data.get('user_name')
+        request_doc.company_name = data.get('company_name')
+        request_doc.user_phone = data.get('user_phone')
+        request_doc.full_name = data.get('full_name')
+        request_doc.email = data.get('email')
+        request_doc.phone = data.get('phone')
+        request_doc.pickup_address = data.get('pickup_address')
+        request_doc.pickup_city = data.get('pickup_city')
+        request_doc.pickup_pincode = data.get('pickup_pincode')
+        request_doc.delivery_address = data.get('delivery_address')
+        request_doc.delivery_city = data.get('delivery_city')
+        request_doc.delivery_pincode = data.get('delivery_pincode')
+        request_doc.goods_type = data.get('goods_type')
+        request_doc.goods_weight = data.get('goods_weight')
+        request_doc.vehicle_type = data.get('vehicle_type')
+        request_doc.estimated_cost = data.get('estimated_cost')
+        request_doc.actual_cost = data.get('actual_cost')
+        request_doc.status = data.get('status', 'Pending')
+        request_doc.delivery_date = data.get('delivery_date')
+        
+        request_doc.flags.ignore_version = True
+        request_doc.insert(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {'success': True, 'message': 'Request created successfully', 'data': request_doc.as_dict()}
+    except Exception as e:
+        frappe.log_error(f"Create Request Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+# @frappe.whitelist()
+# def update_request():
+#     """Update request details"""
+#     try:
+#         ensure_session_data()
+        
+#         data = get_request_data()
+#         request_id = data.get('request_id')
+
+#         if not frappe.db.exists('Logistics Request', request_id):
+#             return {'success': False, 'message': 'Request not found'}
+        
+#         request_doc = frappe.get_doc('Logistics Request', request_id)
+        
+#         for field in ['user_name', 'user_phone', 'pickup_address', 'pickup_city', 'pickup_pincode',
+#                       'delivery_address', 'delivery_city', 'delivery_pincode', 'goods_type', 
+#                       'goods_weight', 'vehicle_type', 'estimated_cost', 'actual_cost', 
+#                       'status', 'company_name', 'delivery_date']:
+#             if field in data:
+#                 setattr(request_doc, field, data.get(field))
+        
+#         request_doc.flags.ignore_version = True
+#         request_doc.save(ignore_permissions=True)
+#         frappe.db.commit()
+        
+#         return {'success': True, 'message': 'Request updated successfully', 'data': request_doc.as_dict()}
+#     except Exception as e:
+#         frappe.log_error(f"Update Request Error: {str(e)}")
+#         frappe.db.rollback()
+#         return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def update_request():
+    """Update request details"""
+    try:
+        ensure_session_data()
+        
+        data = get_request_data()
+        request_id = data.get('request_id')
+        
+        if not request_id:
+            return {'success': False, 'message': 'request_id is required'}
+        
+        if not frappe.db.exists('Logistics Request', request_id):
+            return {'success': False, 'message': 'Request not found'}
+        
+        # Get the request document
+        request_doc = frappe.get_doc('Logistics Request', request_id)
+        
+        # HANDLE STATUS CHANGES
+        new_status = data.get('status')
+        if new_status:
+            # If changing to Pending, clear company assignment
+            if new_status == 'Pending' and request_doc.company_name:
+                # Store previous assignment
+                request_doc.previously_assigned_to = request_doc.company_name
+                request_doc.company_name = None
+                request_doc.company_email = None
+                request_doc.assigned_date = None
+                request_doc.status = 'Pending'
+            
+            # If changing to Assigned, require company_name
+            elif new_status == 'Assigned' and not data.get('company_name'):
+                if not request_doc.company_name:
+                    return {
+                        'success': False,
+                        'message': 'company_name is required when status is "Assigned"'
+                    }
+        
+        # VALIDATE COMPANY NAME IF PROVIDED
+        if data.get('company_name'):
+            company_name = data.get('company_name')
+            
+            # Allow empty string to clear assignment
+            if company_name == "":
+                request_doc.company_name = None
+                request_doc.company_email = None
+                if request_doc.status == 'Assigned':
+                    request_doc.status = 'Pending'
+            else:
+                # Check if company exists
+                if not frappe.db.exists('Logistics Company', company_name):
+                    available_companies = frappe.get_all('Logistics Company',
+                        fields=['company_name'],
+                        filters={'is_active': 1},
+                        pluck='company_name'
+                    )
+                    
+                    return {
+                        'success': False, 
+                        'message': f'Company "{company_name}" not found',
+                        'available_companies': available_companies
+                    }
+                
+                # Check if company is active
+                company_doc = frappe.get_doc('Logistics Company', company_name)
+                if not company_doc.is_active:
+                    return {
+                        'success': False,
+                        'message': f'Company "{company_name}" is not active'
+                    }
+                
+                # Set company and update status
+                request_doc.company_name = company_name
+                request_doc.company_email = company_doc.manager_email
+                if not request_doc.assigned_date:
+                    request_doc.assigned_date = frappe.utils.now()
+                if request_doc.status == 'Pending':
+                    request_doc.status = 'Assigned'
+        
+        # Update other fields
+        for field in ['user_name', 'user_phone', 'pickup_address', 'pickup_city', 'pickup_pincode',
+                      'delivery_address', 'delivery_city', 'delivery_pincode', 'service_type',
+                      'item_description', 'item_weight', 'special_instructions',
+                      'estimated_cost', 'actual_cost', 'priority', 'notes', 'delivery_date']:
+            if field in data:
+                setattr(request_doc, field, data.get(field))
+        
+        # Explicitly set status if provided and not already handled
+        if 'status' in data and not data.get('company_name'):
+            request_doc.status = data.get('status')
+        
+        request_doc.flags.ignore_version = True
+        request_doc.save(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True, 
+            'message': 'Request updated successfully', 
+            'data': request_doc.as_dict()
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Update Request Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)} 
+
+@frappe.whitelist()
+def delete_request():
+    """Delete a request"""
+    try:
+        data = get_request_data()
+        request_id = data.get('request_id')
+        if not frappe.db.exists('Logistics Request', request_id):
+            return {'success': False, 'message': 'Request not found'}
+        
+        frappe.delete_doc('Logistics Request', request_id, ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {'success': True, 'message': 'Request deleted successfully'}
+    except Exception as e:
+        frappe.log_error(f"Delete Request Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+# ===== PAYMENT CRUD OPERATIONS =====
+
+@frappe.whitelist()
+def get_all_payments():
+    """Get all payments"""
+    try:
+        payments = frappe.get_all('Payment',
+            fields=['*'],
+            order_by='created_at desc'
+        )
+        return {'success': True, 'data': payments, 'count': len(payments)}
+    except Exception as e:
+        frappe.log_error(f"Get Payments Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def get_payment():
+    """Get a single payment by ID"""
+    try:
+        payment_id = frappe.local.form_dict.get('payment_id')
+        if not payment_id:
+            return {'success': False, 'message': 'Payment ID is required'}
+
+        if not frappe.db.exists('Payment', payment_id):
+            return {'success': False, 'message': 'Payment not found'}
+        
+        payment = frappe.get_doc('Payment', payment_id)
+        return {'success': True, 'data': payment.as_dict()}
+    except Exception as e:
+        frappe.log_error(f"Get Payment Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def create_payment():
+    """Create a new payment"""
+    try:
+        ensure_session_data()
+        
+        data = get_request_data()
+        
+        payment_doc = frappe.new_doc('Payment')
+        payment_doc.company_name = data.get('company_name')
+        payment_doc.invoice_number = data.get('invoice_number')
+        payment_doc.subscription_plan = data.get('subscription_plan')
+        payment_doc.amount = data.get('amount')
+        payment_doc.payment_status = data.get('payment_status', 'Pending')
+        payment_doc.paid_date = data.get('paid_date')
+        payment_doc.notes = data.get('notes')
+        
+        payment_doc.flags.ignore_version = True
+        payment_doc.insert(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {'success': True, 'message': 'Payment created successfully', 'data': payment_doc.as_dict()}
+    except Exception as e:
+        frappe.log_error(f"Create Payment Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def update_payment():
+    """Update payment status"""
+    try:
+        ensure_session_data()
+        
+        data = get_request_data()
+        payment_id = data.get('payment_id')
+        
+        if not frappe.db.exists('Payment', payment_id):
+            return {'success': False, 'message': 'Payment not found'}
+        
+        payment_doc = frappe.get_doc('Payment', payment_id)
+        
+        if data.get('payment_status'):
+            payment_doc.payment_status = data.get('payment_status')
+            if data.get('payment_status') == 'Paid' and not payment_doc.paid_date:
+                payment_doc.paid_date = datetime.now()
+        
+        if data.get('notes'):
+            payment_doc.notes = data.get('notes')
+        
+        payment_doc.flags.ignore_version = True
+        payment_doc.save(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {'success': True, 'message': 'Payment updated successfully', 'data': payment_doc.as_dict()}
+    except Exception as e:
+        frappe.log_error(f"Update Payment Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def delete_payment():
+    """Delete a payment"""
+    try:
+        data = get_request_data()
+        payment_id = data.get('payment_id')
+        
+        if not frappe.db.exists('Payment', payment_id):
+            return {'success': False, 'message': 'Payment not found'}
+        
+        frappe.delete_doc('Payment', payment_id, ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {'success': True, 'message': 'Payment deleted successfully'}
+    except Exception as e:
+        frappe.log_error(f"Delete Payment Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+# ===== DIAGNOSTIC ENDPOINTS (FOR DEBUGGING) =====
+
+@frappe.whitelist()
+def debug_request_data():
+    """Debug endpoint to see what data is being received"""
+    debug_info = {
+        'success': True,
+        'tests': {}
+    }
+    
+    try:
+        # Test 1: Check if frappe.request exists
+        debug_info['tests']['1_frappe_request_exists'] = bool(frappe.request)
+        
+        # Test 2: Check Content-Type
+        if frappe.request:
+            debug_info['tests']['2_content_type'] = frappe.get_request_header("Content-Type")
+            debug_info['tests']['2_method'] = frappe.request.method
+        else:
+            debug_info['tests']['2_no_request'] = "frappe.request is None"
+        
+        # Test 3: Try frappe.request.get_json()
+        try:
+            if frappe.request and hasattr(frappe.request, 'get_json'):
+                json_data = frappe.request.get_json()
+                debug_info['tests']['3_request_get_json'] = {
+                    'success': True,
+                    'type': type(json_data).__name__,
+                    'is_none': json_data is None,
+                    'data': json_data if json_data else 'None'
+                }
+            else:
+                debug_info['tests']['3_request_get_json'] = 'Method not available'
+        except Exception as e:
+            debug_info['tests']['3_request_get_json'] = {
+                'success': False,
+                'error': str(e)
+            }
+        
+        # Test 4: Check frappe.local.form_dict
+        try:
+            debug_info['tests']['4_form_dict'] = {
+                'exists': hasattr(frappe.local, 'form_dict'),
+                'is_none': frappe.local.form_dict is None if hasattr(frappe.local, 'form_dict') else 'N/A',
+                'type': type(frappe.local.form_dict).__name__ if hasattr(frappe.local, 'form_dict') else 'N/A',
+                'data': dict(frappe.local.form_dict) if hasattr(frappe.local, 'form_dict') and frappe.local.form_dict else None
+            }
+        except Exception as e:
+            debug_info['tests']['4_form_dict'] = {
+                'success': False,
+                'error': str(e)
+            }
+        
+        # Test 5: Try get_request_data()
+        try:
+            data = get_request_data()
+            debug_info['tests']['5_get_request_data'] = {
+                'success': True,
+                'type': type(data).__name__,
+                'is_none': data is None,
+                'is_dict': isinstance(data, dict),
+                'data': data if isinstance(data, dict) else str(data)[:200]
+            }
+        except Exception as e:
+            debug_info['tests']['5_get_request_data'] = {
+                'success': False,
+                'error': str(e),
+                'error_type': type(e).__name__
+            }
+        
+        # Test 6: Session data
+        debug_info['tests']['6_session_data'] = {
+            'exists': hasattr(frappe.session, 'data'),
+            'is_none': frappe.session.data is None if hasattr(frappe.session, 'data') else 'N/A',
+            'user': frappe.session.user
+        }
+        
+        return debug_info
+        
+    except Exception as e:
+        import traceback
+        return {
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }
+
+@frappe.whitelist()
+def list_users_for_update():
+    """List all users with their correct IDs for update operations"""
+    try:
+        users = frappe.db.sql("""
+            SELECT 
+                name as user_id,
+                email,
+                full_name,
+                phone,
+                role,
+                city,
+                state,
+                is_active
+            FROM `tabLocalMoves User`
+            ORDER BY creation DESC
+            LIMIT 20
+        """, as_dict=True)
+        
+        return {
+            'success': True,
+            'count': len(users),
+            'users': users,
+            'instructions': {
+                'note': 'Use the "user_id" field (not email) when calling update_user',
+                'example': {
+                    'user_id': users[0]['user_id'] if users else 'example-id',
+                    'full_name': 'New Name',
+                    'city': 'New City'
+                }
+            }
+        }
+        
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e)
+        }()
+
+@frappe.whitelist(allow_guest=False)
+def create_user():
+    """Create a new user - Admin/System Manager only"""
+    try:
+        # Ensure session data exists
+        ensure_session_data()
+        
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to create users'
+            }
+        
+        data = get_request_data()
+        
+        # Validate required fields
+        required_fields = ['email', 'full_name', 'password', 'phone', 'role']
+        for field in required_fields:
+            if not data.get(field):
+                return {'success': False, 'message': f'{field} is required'}
+        
+        # Check if user already exists
+        if frappe.db.exists('LocalMoves User', {'email': data.get('email')}):
+            return {'success': False, 'message': 'User with this email already exists'}
+        
+        # Check if phone already exists
+        if frappe.db.exists('LocalMoves User', {'phone': data.get('phone')}):
+            return {'success': False, 'message': 'User with this phone number already exists'}
+        
+        # Validate role
+        valid_roles = ['Admin', 'Logistics Manager', 'User']
+        if data.get('role') not in valid_roles:
+            return {'success': False, 'message': f'Invalid role. Must be one of: {", ".join(valid_roles)}'}
+        
+        # Create new user
+        user_doc = frappe.new_doc('LocalMoves User')
+        user_doc.email = data.get('email')
+        user_doc.full_name = data.get('full_name')
+        user_doc.phone = data.get('phone')
+        user_doc.password = data.get('password')  # Will be hashed in before_insert hook
+        user_doc.role = data.get('role')
+        
+        # Optional fields
+        user_doc.pincode = data.get('pincode', '')
+        user_doc.address = data.get('address', '')
+        user_doc.city = data.get('city', '')
+        user_doc.state = data.get('state', '')
+        user_doc.is_active = 1
+        user_doc.is_phone_verified = data.get('is_phone_verified', 0)
+        
+        # Disable version tracking
+        user_doc.flags.ignore_version = True
+        user_doc.insert(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True, 
+            'message': 'User created successfully', 
+            'data': {
+                'user_id': user_doc.name,
+                'email': user_doc.email,
+                'full_name': user_doc.full_name,
+                'phone': user_doc.phone,
+                'role': user_doc.role,
+                'is_active': user_doc.is_active
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Create User Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'message': str(e)}
+
+@frappe.whitelist()
+def update_user():
+    """Update user details - Admin/System Manager only"""
+    try:
+        # Ensure session data exists FIRST
+        ensure_session_data()
+        
+        # Permission check
+        if not check_admin_permission():
+            frappe.local.response['http_status_code'] = 403
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to update users'
+            }
+        
+        # Get request data
+        data = get_request_data()
+        
+        # Validate data is not None
+        if data is None:
+            frappe.local.response['http_status_code'] = 400
+            return {'success': False, 'message': 'No data provided in request'}
+        
+        # Validate data is a dict
+        if not isinstance(data, dict):
+            frappe.local.response['http_status_code'] = 400
+            return {'success': False, 'message': f'Invalid data type: {type(data).__name__}'}
+        
+        # Get user_id
+        user_id = data.get('user_id')
+        
+        if not user_id:
+            frappe.local.response['http_status_code'] = 400
+            return {'success': False, 'message': 'user_id is required'}
+        
+        # Check if user exists - Use SQL instead of db.exists with dict
+        user_exists = frappe.db.sql("""
+            SELECT name FROM `tabLocalMoves User`
+            WHERE name = %s OR email = %s
+            LIMIT 1
+        """, (user_id, user_id), as_dict=True)
+        
+        if not user_exists:
+            frappe.local.response['http_status_code'] = 404
+            return {'success': False, 'message': f'User not found: {user_id}'}
+        
+        # Get actual user ID
+        actual_user_id = user_exists[0]['name']
+        
+        # Get the user document
+        user_doc = frappe.get_doc('LocalMoves User', actual_user_id)
+        
+        # Track what we're updating
+        updated_fields = []
+        
+        # Update full_name if provided
+        if 'full_name' in data and data.get('full_name'):
+            user_doc.full_name = data.get('full_name')
+            updated_fields.append('full_name')
+        
+        # Update phone if provided
+        if 'phone' in data and data.get('phone'):
+            new_phone = data.get('phone')
+            # Only check if phone is actually changing
+            if new_phone != user_doc.phone:
+                # Use SQL instead of db.exists with dict
+                phone_exists = frappe.db.sql("""
+                    SELECT name FROM `tabLocalMoves User`
+                    WHERE phone = %s AND name != %s
+                    LIMIT 1
+                """, (new_phone, actual_user_id))
+                
+                if phone_exists:
+                    frappe.local.response['http_status_code'] = 409
+                    return {
+                        'success': False, 
+                        'message': f'Phone number already exists for user: {phone_exists[0][0]}'
+                    }
+                
+                user_doc.phone = new_phone
+                updated_fields.append('phone')
+        
+        # Update role if provided
+        if 'role' in data and data.get('role'):
+            valid_roles = ['Admin', 'Logistics Manager', 'User']
+            new_role = data.get('role')
+            if new_role not in valid_roles:
+                frappe.local.response['http_status_code'] = 400
+                return {
+                    'success': False, 
+                    'message': f'Invalid role. Must be one of: {", ".join(valid_roles)}'
+                }
+            user_doc.role = new_role
+            updated_fields.append('role')
+        
+        # Update optional text fields
+        if 'pincode' in data:
+            user_doc.pincode = data.get('pincode') or ''
+            updated_fields.append('pincode')
+        
+        if 'address' in data:
+            user_doc.address = data.get('address') or ''
+            updated_fields.append('address')
+        
+        if 'city' in data:
+            user_doc.city = data.get('city') or ''
+            updated_fields.append('city')
+        
+        if 'state' in data:
+            user_doc.state = data.get('state') or ''
+            updated_fields.append('state')
+        
+        # Update boolean fields
+        if 'is_active' in data:
+            try:
+                user_doc.is_active = int(data.get('is_active'))
+                updated_fields.append('is_active')
+            except (ValueError, TypeError):
+                frappe.local.response['http_status_code'] = 400
+                return {'success': False, 'message': 'is_active must be 0 or 1'}
+        
+        if 'is_phone_verified' in data:
+            try:
+                user_doc.is_phone_verified = int(data.get('is_phone_verified'))
+                updated_fields.append('is_phone_verified')
+            except (ValueError, TypeError):
+                frappe.local.response['http_status_code'] = 400
+                return {'success': False, 'message': 'is_phone_verified must be 0 or 1'}
+        
+        # Update password if provided
+        if 'password' in data and data.get('password'):
+            user_doc.password = data.get('password')
+            updated_fields.append('password')
+        
+        # Check if anything needs to be updated
+        if not updated_fields:
+            return {
+                'success': True, 
+                'message': 'No fields to update',
+                'data': {
+                    'user_id': user_doc.name,
+                    'email': user_doc.email,
+                    'full_name': user_doc.full_name,
+                    'phone': user_doc.phone,
+                    'role': user_doc.role,
+                    'is_active': user_doc.is_active
+                }
+            }
+        
+        # CRITICAL FIX: Disable version tracking before save
+        user_doc.flags.ignore_version = True
+        
+        # Save the document
+        user_doc.save(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True, 
+            'message': f'User updated successfully. Updated fields: {", ".join(updated_fields)}',
+            'data': {
+                'user_id': user_doc.name,
+                'email': user_doc.email,
+                'full_name': user_doc.full_name,
+                'phone': user_doc.phone,
+                'role': user_doc.role,
+                'city': user_doc.city or '',
+                'state': user_doc.state or '',
+                'is_active': user_doc.is_active,
+                'updated_fields': updated_fields
+            }
+        }
+        
+    except frappe.ValidationError as ve:
+        error_msg = str(ve)
+        frappe.local.response['http_status_code'] = 422
+        frappe.log_error(title="User Update Validation", message=error_msg)
+        frappe.db.rollback()
+        return {'success': False, 'message': f'Validation error: {error_msg}'}
+        
+    except frappe.DoesNotExistError as de:
+        error_msg = str(de)
+        frappe.local.response['http_status_code'] = 404
+        frappe.log_error(title="User Not Found", message=error_msg)
+        frappe.db.rollback()
+        return {'success': False, 'message': f'User does not exist'}
+    
+    except Exception as e:
+        error_msg = str(e)
+        error_type = type(e).__name__
+        frappe.local.response['http_status_code'] = 500
+        
+        # Log full error details
+        import traceback
+        frappe.log_error(
+            title="User Update Error",
+            message=f"Error Type: {error_type}\nError: {error_msg}\n\nTraceback:\n{traceback.format_exc()}"
+        )
+        frappe.db.rollback()
+        
+        return {
+            'success': False, 
+            'message': f'Error: {error_msg}',
+            'error_type': error_type
+        }
+
+@frappe.whitelist()
+def delete_user():
+    """Delete a user - Admin/System Manager only"""
+    try:
+        # Ensure session data exists
+        ensure_session_data()
+        
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to delete users'
+            }
+        
+        data = get_request_data()
+        user_id = data.get('user_id')
+        
+        if not user_id:
+            return {'success': False, 'message': 'user_id is required'}
+        
+        if not frappe.db.exists('LocalMoves User', user_id):
+            return {'success': False, 'message': 'User not found'}
+        
+        # Prevent deleting yourself
+        current_user_email = frappe.session.user
+        user_to_delete = frappe.get_doc('LocalMoves User', user_id)
+        
+        if user_to_delete.email == current_user_email:
+            return {'success': False, 'message': 'You cannot delete your own account'}
+        
+        frappe.delete_doc('LocalMoves User', user_id, ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {'success': True, 'message': 'User deleted successfully'}
+    except Exception as e:
+        frappe.log_error(f"Delete User Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'message': str(e)}
+
+@frappe.whitelist()
+def get_all_users():
+    """Get all users with filters - Admin/System Manager only"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to view users'
+            }
+        
+        # Get filter parameters
+        data = get_request_data()
+        filters = {}
+        
+        if data.get('role'):
+            filters['role'] = data.get('role')
+        
+        if data.get('is_active') is not None:
+            filters['is_active'] = int(data.get('is_active'))
+        
+        users = frappe.get_all('LocalMoves User',
+            fields=['name', 'full_name', 'email', 'phone', 'role', 'is_active', 'city', 'state', 'creation', 'last_login'],
+            filters=filters,
+            order_by='creation desc'
+        )
+        
+        return {'success': True, 'data': users, 'count': len(users)}
+    except Exception as e:
+        frappe.log_error(f"Get Users Error: {str(e)}")
+        return {'success': False, 'message': str(e)}
+
+@frappe.whitelist()
+def get_user():
+    """Get a single user by ID - Admin/System Manager only"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to view users'
+            }
+        
+        user_id = frappe.local.form_dict.get('user_id')
+        if not user_id:
+            return {'success': False, 'message': 'User ID is required'}
+
+        if not frappe.db.exists('LocalMoves User', user_id):
+            return {'success': False, 'message': 'User not found'}
+        
+        user = frappe.get_doc('LocalMoves User', user_id)
+        user_dict = user.as_dict()
+        
+        # Remove sensitive data
+        if 'password' in user_dict:
+            del user_dict['password']
+        if 'otp_code' in user_dict:
+            del user_dict['otp_code']
+        
+        return {'success': True, 'data': user_dict}
+    except Exception as e:
+        frappe.log_error(f"Get User Error: {str(e)}")
+        return {'success': False, 'message': str(e)}
+
+# ===== CHART DATA FUNCTIONS =====
+
+@frappe.whitelist()
+def get_user_growth_chart():
+    """Get user growth data for charts (7 days, 1 month, 1 year)"""
+    try:
+        # Last 7 days
+        seven_days_data = frappe.db.sql("""
+            SELECT DATE(creation) as date, COUNT(*) as count
+            FROM `tabLocalMoves User`
+            WHERE creation >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+            GROUP BY DATE(creation)
+            ORDER BY date ASC
+        """, as_dict=True)
+        
+        # Last 30 days
+        month_data = frappe.db.sql("""
+            SELECT DATE(creation) as date, COUNT(*) as count
+            FROM `tabLocalMoves User`
+            WHERE creation >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            GROUP BY DATE(creation)
+            ORDER BY date ASC
+        """, as_dict=True)
+        
+        # Last 12 months
+        year_data = frappe.db.sql("""
+            SELECT DATE_FORMAT(creation, '%Y-%m') as month, COUNT(*) as count
+            FROM `tabLocalMoves User`
+            WHERE creation >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+            GROUP BY DATE_FORMAT(creation, '%Y-%m')
+            ORDER BY month ASC
+        """, as_dict=True)
+        
+        return {
+            'success': True,
+            'data': {
+                'seven_days': seven_days_data,
+                'one_month': month_data,
+                'one_year': year_data
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"User Growth Chart Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def get_revenue_chart():
+    """Get revenue data for charts"""
+    try:
+        # Last 7 days
+        seven_days = frappe.db.sql("""
+            SELECT DATE(paid_date) as date, SUM(amount) as revenue
+            FROM `tabPayment`
+            WHERE payment_status = 'Paid' 
+            AND paid_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+            GROUP BY DATE(paid_date)
+            ORDER BY date ASC
+        """, as_dict=True)
+        
+        # Last 30 days
+        month_data = frappe.db.sql("""
+            SELECT DATE(paid_date) as date, SUM(amount) as revenue
+            FROM `tabPayment`
+            WHERE payment_status = 'Paid'
+            AND paid_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            GROUP BY DATE(paid_date)
+            ORDER BY date ASC
+        """, as_dict=True)
+        
+        # Last 12 months
+        year_data = frappe.db.sql("""
+            SELECT DATE_FORMAT(paid_date, '%Y-%m') as month, SUM(amount) as revenue
+            FROM `tabPayment`
+            WHERE payment_status = 'Paid'
+            AND paid_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+            GROUP BY DATE_FORMAT(paid_date, '%Y-%m')
+            ORDER BY month ASC
+        """, as_dict=True)
+        
+        return {
+            'success': True,
+            'data': {
+                'seven_days': seven_days,
+                'one_month': month_data,
+                'one_year': year_data
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Revenue Chart Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def get_dashboard_stats():
+    """Get comprehensive dashboard statistics for admin INCLUDING PAYMENTS"""
+    try:
+        # Total counts
+        total_users = frappe.db.count('LocalMoves User', {'is_active': 1})
+        total_companies = frappe.db.count('Logistics Company')
+        
+        # PAID SUBSCRIBERS ONLY (companies with paid plans)
+        paid_subscribers = frappe.db.count('Logistics Company', {
+            'subscription_plan': ['in', ['Basic', 'Standard', 'Premium']]
+        })
+        
+        total_requests = frappe.db.count('Logistics Request')
+        
+        # ===== PAYMENT STATISTICS =====
+        
+        # Total payments and revenue
+        total_payments_count = frappe.db.count('Payment')
+        
+        # Revenue from PAID payments only
+        paid_revenue = frappe.db.sql("""
+            SELECT COALESCE(SUM(amount), 0) as total
+            FROM `tabPayment`
+            WHERE payment_status = 'Paid'
+        """, as_dict=True)[0].total or 0
+        
+        # Pending revenue
+        pending_revenue = frappe.db.sql("""
+            SELECT COALESCE(SUM(amount), 0) as total
+            FROM `tabPayment`
+            WHERE payment_status = 'Pending'
+        """, as_dict=True)[0].total or 0
+        
+        # Revenue from request payments (Payment Transaction doctype)
+        request_deposit_revenue = frappe.db.sql("""
+            SELECT COALESCE(SUM(deposit_amount), 0) as total
+            FROM `tabPayment Transaction`
+            WHERE deposit_status = 'Paid'
+        """, as_dict=True)[0].total or 0
+        
+        request_balance_revenue = frappe.db.sql("""
+            SELECT COALESCE(SUM(remaining_amount), 0) as total
+            FROM `tabPayment Transaction`
+            WHERE balance_status = 'Paid'
+        """, as_dict=True)[0].total or 0
+        
+        total_request_payments_revenue = request_deposit_revenue + request_balance_revenue
+        
+        # Combined total revenue
+        total_revenue = paid_revenue + total_request_payments_revenue
+        
+        # Payment status breakdown
+        payment_status_breakdown = frappe.db.sql("""
+            SELECT payment_status, COUNT(*) as count
+            FROM `tabPayment`
+            GROUP BY payment_status
+        """, as_dict=True)
+        
+        # Subscription plan revenue breakdown (PAID ONLY)
+        subscription_revenue_breakdown = frappe.db.sql("""
+            SELECT subscription_plan, 
+                   SUM(amount) as revenue,
+                   COUNT(*) as count
+            FROM `tabPayment`
+            WHERE payment_status = 'Paid'
+            AND subscription_plan IN ('Basic', 'Standard', 'Premium')
+            GROUP BY subscription_plan
+        """, as_dict=True)
+        
+        # Active subscriptions by plan (PAID ONLY)
+        subscription_breakdown = frappe.db.sql("""
+            SELECT subscription_plan, COUNT(*) as count
+            FROM `tabLogistics Company`
+            WHERE is_active = 1
+            AND subscription_plan IN ('Basic', 'Standard', 'Premium')
+            GROUP BY subscription_plan
+        """, as_dict=True)
+        
+        # Recent activity
+        recent_users = frappe.get_all('LocalMoves User',
+            fields=['name', 'full_name', 'email', 'role', 'creation'],
+            order_by='creation desc',
+            limit=10
+        )
+        
+        recent_companies = frappe.get_all('Logistics Company',
+            fields=['name', 'company_name', 'manager_email', 'subscription_plan', 'created_at'],
+            order_by='created_at desc',
+            limit=10
+        )
+        
+        recent_payments = frappe.get_all('Payment',
+            fields=['name', 'company_name', 'amount', 'payment_status', 'subscription_plan', 'created_at', 'paid_date'],
+            order_by='created_at desc',
+            limit=10
+        )
+        
+        recent_requests = frappe.get_all('Logistics Request',
+            fields=['name', 'user_email', 'pickup_city', 'delivery_city', 'status', 'created_at'],
+            order_by='created_at desc',
+            limit=10
+        )
+        
+        # Recent request payments
+        recent_request_payments = frappe.get_all('Payment Transaction',
+            fields=['name', 'request_id', 'company_name', 'total_amount', 'payment_status', 'created_at'],
+            order_by='created_at desc',
+            limit=10
+        )
+        
+        return {
+            'success': True,
+            'data': {
+                'totals': {
+                    'users': total_users,
+                    'companies': total_companies,
+                    'paid_subscribers': paid_subscribers,
+                    'requests': total_requests,
+                    'total_payments': total_payments_count
+                },
+                'revenue': {
+                    'total': float(total_revenue),
+                    'subscription_revenue': float(paid_revenue),
+                    'request_payments_revenue': float(total_request_payments_revenue),
+                    'pending': float(pending_revenue),
+                    'paid_count': len([p for p in payment_status_breakdown if p['payment_status'] == 'Paid']),
+                    'pending_count': len([p for p in payment_status_breakdown if p['payment_status'] == 'Pending'])
+                },
+                'payment_breakdown': {
+                    'by_status': payment_status_breakdown,
+                    'by_subscription': subscription_revenue_breakdown
+                },
+                'subscriptions': subscription_breakdown,
+                'recent': {
+                    'users': recent_users,
+                    'companies': recent_companies,
+                    'payments': recent_payments,
+                    'requests': recent_requests,
+                    'request_payments': recent_request_payments
+                }
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Dashboard Stats Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+# ===== PAYMENT CHARTS =====
+
+@frappe.whitelist()
+def get_payment_revenue_chart():
+    """Get payment revenue data for charts (7 days, 1 month, 1 year)"""
+    try:
+        # Last 7 days
+        seven_days = frappe.db.sql("""
+            SELECT DATE(paid_date) as date, 
+                   SUM(amount) as revenue,
+                   COUNT(*) as count
+            FROM `tabPayment`
+            WHERE payment_status = 'Paid' 
+            AND paid_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+            GROUP BY DATE(paid_date)
+            ORDER BY date ASC
+        """, as_dict=True)
+        
+        # Last 30 days
+        month_data = frappe.db.sql("""
+            SELECT DATE(paid_date) as date, 
+                   SUM(amount) as revenue,
+                   COUNT(*) as count
+            FROM `tabPayment`
+            WHERE payment_status = 'Paid'
+            AND paid_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            GROUP BY DATE(paid_date)
+            ORDER BY date ASC
+        """, as_dict=True)
+        
+        # Last 12 months
+        year_data = frappe.db.sql("""
+            SELECT DATE_FORMAT(paid_date, '%Y-%m') as month, 
+                   SUM(amount) as revenue,
+                   COUNT(*) as count
+            FROM `tabPayment`
+            WHERE payment_status = 'Paid'
+            AND paid_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+            GROUP BY DATE_FORMAT(paid_date, '%Y-%m')
+            ORDER BY month ASC
+        """, as_dict=True)
+        
+        return {
+            'success': True,
+            'data': {
+                'seven_days': seven_days,
+                'one_month': month_data,
+                'one_year': year_data
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Payment Revenue Chart Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist()
+def get_subscription_revenue_chart():
+    """Get revenue breakdown by subscription plan over time"""
+    try:
+        # Last 12 months by plan
+        monthly_plan_revenue = frappe.db.sql("""
+            SELECT 
+                DATE_FORMAT(paid_date, '%Y-%m') as month,
+                subscription_plan,
+                SUM(amount) as revenue,
+                COUNT(*) as count
+            FROM `tabPayment`
+            WHERE payment_status = 'Paid'
+            AND paid_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+            AND subscription_plan IN ('Basic', 'Standard', 'Premium')
+            GROUP BY DATE_FORMAT(paid_date, '%Y-%m'), subscription_plan
+            ORDER BY month ASC, subscription_plan
+        """, as_dict=True)
+        
+        # Current month breakdown
+        current_month_breakdown = frappe.db.sql("""
+            SELECT 
+                subscription_plan,
+                SUM(amount) as revenue,
+                COUNT(*) as count
+            FROM `tabPayment`
+            WHERE payment_status = 'Paid'
+            AND MONTH(paid_date) = MONTH(CURDATE())
+            AND YEAR(paid_date) = YEAR(CURDATE())
+            AND subscription_plan IN ('Basic', 'Standard', 'Premium')
+            GROUP BY subscription_plan
+        """, as_dict=True)
+        
+        return {
+            'success': True,
+            'data': {
+                'monthly_by_plan': monthly_plan_revenue,
+                'current_month': current_month_breakdown
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Subscription Revenue Chart Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist()
+def get_payment_status_chart():
+    """Get payment status distribution over time"""
+    try:
+        # Daily payment status for last 30 days
+        daily_status = frappe.db.sql("""
+            SELECT 
+                DATE(created_at) as date,
+                payment_status,
+                COUNT(*) as count,
+                SUM(amount) as total_amount
+            FROM `tabPayment`
+            WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            GROUP BY DATE(created_at), payment_status
+            ORDER BY date ASC
+        """, as_dict=True)
+        
+        # Overall status distribution
+        overall_status = frappe.db.sql("""
+            SELECT 
+                payment_status,
+                COUNT(*) as count,
+                SUM(amount) as total_amount
+            FROM `tabPayment`
+            GROUP BY payment_status
+        """, as_dict=True)
+        
+        return {
+            'success': True,
+            'data': {
+                'daily_status': daily_status,
+                'overall_status': overall_status
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Payment Status Chart Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def get_request_payment_chart():
+    """Get request payment (deposit + balance) statistics over time"""
+    try:
+        # Last 30 days
+        daily_request_payments = frappe.db.sql("""
+            SELECT 
+                DATE(created_at) as date,
+                COUNT(*) as total_transactions,
+                SUM(CASE WHEN deposit_status = 'Paid' THEN deposit_amount ELSE 0 END) as deposit_revenue,
+                SUM(CASE WHEN balance_status = 'Paid' THEN remaining_amount ELSE 0 END) as balance_revenue,
+                SUM(CASE WHEN payment_status = 'Fully Paid' THEN total_amount ELSE 0 END) as fully_paid_revenue
+            FROM `tabPayment Transaction`
+            WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            GROUP BY DATE(created_at)
+            ORDER BY date ASC
+        """, as_dict=True)
+        
+        # Last 12 months
+        monthly_request_payments = frappe.db.sql("""
+            SELECT 
+                DATE_FORMAT(created_at, '%Y-%m') as month,
+                COUNT(*) as total_transactions,
+                SUM(CASE WHEN deposit_status = 'Paid' THEN deposit_amount ELSE 0 END) as deposit_revenue,
+                SUM(CASE WHEN balance_status = 'Paid' THEN remaining_amount ELSE 0 END) as balance_revenue,
+                SUM(CASE WHEN payment_status = 'Fully Paid' THEN total_amount ELSE 0 END) as fully_paid_revenue
+            FROM `tabPayment Transaction`
+            WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+            GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+            ORDER BY month ASC
+        """, as_dict=True)
+        
+        return {
+            'success': True,
+            'data': {
+                'daily': daily_request_payments,
+                'monthly': monthly_request_payments
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Request Payment Chart Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def get_combined_revenue_chart():
+    """Get combined revenue from subscriptions and request payments"""
+    try:
+        # Last 12 months combined
+        monthly_combined = frappe.db.sql("""
+            SELECT 
+                month,
+                SUM(subscription_revenue) as subscription_revenue,
+                SUM(request_payment_revenue) as request_payment_revenue,
+                SUM(total_revenue) as total_revenue
+            FROM (
+                SELECT 
+                    DATE_FORMAT(paid_date, '%Y-%m') as month,
+                    SUM(amount) as subscription_revenue,
+                    0 as request_payment_revenue,
+                    SUM(amount) as total_revenue
+                FROM `tabPayment`
+                WHERE payment_status = 'Paid'
+                AND paid_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+                GROUP BY DATE_FORMAT(paid_date, '%Y-%m')
+                
+                UNION ALL
+                
+                SELECT 
+                    DATE_FORMAT(created_at, '%Y-%m') as month,
+                    0 as subscription_revenue,
+                    SUM(CASE WHEN deposit_status = 'Paid' THEN deposit_amount ELSE 0 END) +
+                    SUM(CASE WHEN balance_status = 'Paid' THEN remaining_amount ELSE 0 END) as request_payment_revenue,
+                    SUM(CASE WHEN deposit_status = 'Paid' THEN deposit_amount ELSE 0 END) +
+                    SUM(CASE WHEN balance_status = 'Paid' THEN remaining_amount ELSE 0 END) as total_revenue
+                FROM `tabPayment Transaction`
+                WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+                GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+            ) combined_data
+            GROUP BY month
+            ORDER BY month ASC
+        """, as_dict=True)
+        
+        return {
+            'success': True,
+            'data': {
+                'monthly_combined': monthly_combined
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Combined Revenue Chart Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist()
+def get_payment_analytics():
+    """Get detailed payment analytics"""
+    try:
+        # Top paying companies
+        top_companies = frappe.db.sql("""
+            SELECT 
+                company_name,
+                COUNT(*) as payment_count,
+                SUM(amount) as total_paid,
+                MAX(paid_date) as last_payment_date
+            FROM `tabPayment`
+            WHERE payment_status = 'Paid'
+            GROUP BY company_name
+            ORDER BY total_paid DESC
+            LIMIT 10
+        """, as_dict=True)
+        
+        # Payment method distribution
+        payment_methods = frappe.db.sql("""
+            SELECT 
+                payment_method,
+                COUNT(*) as count,
+                SUM(amount) as total_amount
+            FROM `tabPayment`
+            WHERE payment_status = 'Paid'
+            AND payment_method IS NOT NULL
+            GROUP BY payment_method
+        """, as_dict=True)
+        
+        # Average payment by plan
+        avg_by_plan = frappe.db.sql("""
+            SELECT 
+                subscription_plan,
+                AVG(amount) as avg_amount,
+                MIN(amount) as min_amount,
+                MAX(amount) as max_amount,
+                COUNT(*) as count
+            FROM `tabPayment`
+            WHERE payment_status = 'Paid'
+            AND subscription_plan IN ('Basic', 'Standard', 'Premium')
+            GROUP BY subscription_plan
+        """, as_dict=True)
+        
+        # MRR (Monthly Recurring Revenue) calculation
+        active_subscriptions = frappe.db.sql("""
+            SELECT 
+                subscription_plan,
+                COUNT(*) as count
+            FROM `tabLogistics Company`
+            WHERE is_active = 1
+            AND subscription_end_date >= CURDATE()
+            AND subscription_plan IN ('Basic', 'Standard', 'Premium')
+            GROUP BY subscription_plan
+        """, as_dict=True)
+        
+        # Calculate MRR based on plan pricing (from payment.py)
+        plan_prices = {
+            'Basic': 999,
+            'Standard': 4999,
+            'Premium': 14999
+        }
+        
+        mrr = sum([
+            sub['count'] * plan_prices.get(sub['subscription_plan'], 0)
+            for sub in active_subscriptions
+        ])
+        
+        return {
+            'success': True,
+            'analytics': {
+                'top_companies': top_companies,
+                'payment_methods': payment_methods,
+                'average_by_plan': avg_by_plan,
+                'active_subscriptions': active_subscriptions,
+                'mrr': mrr,
+                'arr': mrr * 12  # Annual Recurring Revenue
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Payment Analytics Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def get_user_growth_chart():
+    """Get user growth data for charts (7 days, 1 month, 1 year)"""
+    try:
+        seven_days_data = frappe.db.sql("""
+            SELECT DATE(creation) as date, COUNT(*) as count
+            FROM `tabLocalMoves User`
+            WHERE creation >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+            GROUP BY DATE(creation)
+            ORDER BY date ASC
+        """, as_dict=True)
+        
+        month_data = frappe.db.sql("""
+            SELECT DATE(creation) as date, COUNT(*) as count
+            FROM `tabLocalMoves User`
+            WHERE creation >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            GROUP BY DATE(creation)
+            ORDER BY date ASC
+        """, as_dict=True)
+        
+        year_data = frappe.db.sql("""
+            SELECT DATE_FORMAT(creation, '%Y-%m') as month, COUNT(*) as count
+            FROM `tabLocalMoves User`
+            WHERE creation >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+            GROUP BY DATE_FORMAT(creation, '%Y-%m')
+            ORDER BY month ASC
+        """, as_dict=True)
+        
+        return {
+            'success': True,
+            'data': {
+                'seven_days': seven_days_data,
+                'one_month': month_data,
+                'one_year': year_data
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"User Growth Chart Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def get_revenue_chart():
+    """Get revenue data for charts - ALIAS for get_payment_revenue_chart"""
+    return get_payment_revenue_chart()
+
+# ===== COMPANY CRUD OPERATIONS =====
+
+@frappe.whitelist()
+def get_all_companies():
+    """Get all companies"""
+    try:
+        companies = frappe.get_all('Logistics Company',
+            fields=['*'],
+            order_by='created_at desc'
+        )
+        return {'success': True, 'data': companies, 'count': len(companies)}
+    except Exception as e:
+        frappe.log_error(f"Get Companies Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def get_company():
+    """Get a single company by ID"""
+    try:
+        company_id = frappe.local.form_dict.get('company_id')
+        if not company_id:
+            return {'success': False, 'message': 'Company ID is required'}
+
+        if not frappe.db.exists('Logistics Company', company_id):
+            return {'success': False, 'message': 'Company not found'}
+        
+        company = frappe.get_doc('Logistics Company', company_id)
+        return {'success': True, 'data': company.as_dict()}
+    except Exception as e:
+        frappe.log_error(f"Get Company Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def create_company():
+    """Create a new company"""
+    try:
+        ensure_session_data()
+        
+        data = get_request_data()
+        
+        if frappe.db.exists('Logistics Company', {'company_name': data.get('company_name')}):
+            return {'success': False, 'message': 'Company with this name already exists'}
+        
+        company_doc = frappe.new_doc('Logistics Company')
+        company_doc.company_name = data.get('company_name')
+        company_doc.manager_email = data.get('manager_email')
+        company_doc.manager_name = data.get('manager_name')
+        company_doc.phone = data.get('phone')
+        company_doc.address = data.get('address')
+        company_doc.pincode = data.get('pincode')
+        company_doc.location = data.get('location')
+        company_doc.description = data.get('description')
+        company_doc.services_offered = data.get('services_offered')
+        company_doc.subscription_plan = data.get('subscription_plan', 'Free')
+        company_doc.is_active = 1
+        
+        company_doc.flags.ignore_version = True
+        company_doc.insert(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {'success': True, 'message': 'Company created successfully', 'data': company_doc.as_dict()}
+    except Exception as e:
+        frappe.log_error(f"Create Company Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def update_company():
+    """Update company details"""
+    try:
+        ensure_session_data()
+        
+        data = get_request_data()
+        company_name = data.get('company_name')
+        
+        if not frappe.db.exists('Logistics Company', company_name):
+            return {'success': False, 'message': 'Company not found'}
+        
+        company_doc = frappe.get_doc('Logistics Company', company_name)
+        
+        for field in ['phone', 'address', 'pincode', 'location', 'description', 
+                      'services_offered', 'subscription_plan', 'is_active']:
+            if field in data:
+                setattr(company_doc, field, data.get(field))
+        
+        company_doc.flags.ignore_version = True
+        company_doc.save(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {'success': True, 'message': 'Company updated successfully', 'data': company_doc.as_dict()}
+    except Exception as e:
+        frappe.log_error(f"Update Company Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def delete_company():
+    """Delete a company"""
+    try:
+        data = get_request_data()
+        company_name = data.get('company_name')
+        
+        if not frappe.db.exists('Logistics Company', company_name):
+            return {'success': False, 'message': 'Company not found'}
+        
+        frappe.delete_doc('Logistics Company', company_name, ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {'success': True, 'message': 'Company deleted successfully'}
+    except Exception as e:
+        frappe.log_error(f"Delete Company Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+# ===== REQUEST CRUD OPERATIONS =====
+
+@frappe.whitelist()
+def get_all_requests():
+    """Get all logistics requests"""
+    try:
+        requests = frappe.get_all('Logistics Request',
+            fields=['*'],
+            order_by='created_at desc'
+        )
+        return {'success': True, 'data': requests, 'count': len(requests)}
+    except Exception as e:
+        frappe.log_error(f"Get Requests Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def get_request():
+    """Get a single request by ID"""
+    try:
+        request_id = frappe.local.form_dict.get('request_id')
+        if not request_id:
+            return {'success': False, 'message': 'Request ID is required'}
+
+        if not frappe.db.exists('Logistics Request', request_id):
+            return {'success': False, 'message': 'Request not found'}
+        
+        request = frappe.get_doc('Logistics Request', request_id)
+        return {'success': True, 'data': request.as_dict()}
+    except Exception as e:
+        frappe.log_error(f"Get Request Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist()
+def debug_request_data():
+    """Debug endpoint to see what data is being received"""
+    debug_info = {
+        'success': True,
+        'tests': {}
+    }
+    
+    try:
+        # Test 1: Check if frappe.request exists
+        debug_info['tests']['1_frappe_request_exists'] = bool(frappe.request)
+        
+        # Test 2: Check Content-Type
+        if frappe.request:
+            debug_info['tests']['2_content_type'] = frappe.get_request_header("Content-Type")
+            debug_info['tests']['2_method'] = frappe.request.method
+        else:
+            debug_info['tests']['2_no_request'] = "frappe.request is None"
+        
+        # Test 3: Try frappe.request.get_json()
+        try:
+            if frappe.request and hasattr(frappe.request, 'get_json'):
+                json_data = frappe.request.get_json()
+                debug_info['tests']['3_request_get_json'] = {
+                    'success': True,
+                    'type': type(json_data).__name__,
+                    'is_none': json_data is None,
+                    'data': json_data if json_data else 'None'
+                }
+            else:
+                debug_info['tests']['3_request_get_json'] = 'Method not available'
+        except Exception as e:
+            debug_info['tests']['3_request_get_json'] = {
+                'success': False,
+                'error': str(e)
+            }
+        
+        # Test 4: Check frappe.local.form_dict
+        try:
+            debug_info['tests']['4_form_dict'] = {
+                'exists': hasattr(frappe.local, 'form_dict'),
+                'is_none': frappe.local.form_dict is None if hasattr(frappe.local, 'form_dict') else 'N/A',
+                'type': type(frappe.local.form_dict).__name__ if hasattr(frappe.local, 'form_dict') else 'N/A',
+                'data': dict(frappe.local.form_dict) if hasattr(frappe.local, 'form_dict') and frappe.local.form_dict else None
+            }
+        except Exception as e:
+            debug_info['tests']['4_form_dict'] = {
+                'success': False,
+                'error': str(e)
+            }
+        
+        # Test 5: Try get_request_data()
+        try:
+            data = get_request_data()
+            debug_info['tests']['5_get_request_data'] = {
+                'success': True,
+                'type': type(data).__name__,
+                'is_none': data is None,
+                'is_dict': isinstance(data, dict),
+                'data': data if isinstance(data, dict) else str(data)[:200]
+            }
+        except Exception as e:
+            debug_info['tests']['5_get_request_data'] = {
+                'success': False,
+                'error': str(e),
+                'error_type': type(e).__name__
+            }
+        
+        # Test 6: Check frappe.request.data
+        try:
+            if frappe.request and hasattr(frappe.request, 'data'):
+                debug_info['tests']['6_request_data'] = {
+                    'exists': True,
+                    'data': frappe.request.data.decode('utf-8') if frappe.request.data else None
+                }
+            else:
+                debug_info['tests']['6_request_data'] = 'Not available'
+        except Exception as e:
+            debug_info['tests']['6_request_data'] = str(e)
+        
+        # Test 7: Session user
+        debug_info['tests']['7_session_user'] = frappe.session.user
+        
+        # Test 8: Admin permission
+        debug_info['tests']['8_has_admin_permission'] = check_admin_permission()
+        
+        return debug_info
+        
+    except Exception as e:
+        import traceback
+        return {
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }
+
+
+@frappe.whitelist()
+def test_update_simple():
+    """Simplest possible update test that bypasses get_request_data()"""
+    try:
+        # Method 1: Try direct JSON
+        data = None
+        if frappe.request:
+            try:
+                data = frappe.request.get_json()
+            except:
+                pass
+        
+        # Method 2: Try form_dict
+        if not data:
+            data = frappe.local.form_dict
+        
+        return {
+            'success': True,
+            'message': 'Data received',
+            'data_type': type(data).__name__,
+            'data_is_none': data is None,
+            'data_content': data if isinstance(data, dict) else str(data)[:200],
+            'data_keys': list(data.keys()) if isinstance(data, dict) else None
+        }
+        
+    except Exception as e:
+        import traceback
+        return {
+            'success': False,
+            'error': str(e),
+            'error_type': type(e).__name__,
+            'traceback': traceback.format_exc()
+        }
+
+
+@frappe.whitelist()
+def list_users_for_update():
+    """List all users with their correct IDs for update operations"""
+    try:
+        users = frappe.db.sql("""
+            SELECT 
+                name as user_id,
+                email,
+                full_name,
+                phone,
+                role,
+                city,
+                state,
+                is_active
+            FROM `tabLocalMoves User`
+            ORDER BY creation DESC
+            LIMIT 20
+        """, as_dict=True)
+        
+        return {
+            'success': True,
+            'count': len(users),
+            'users': users,
+            'instructions': {
+                'note': 'Use the "user_id" field (not email) when calling update_user',
+                'example': {
+                    'user_id': users[0]['user_id'] if users else 'example-id',
+                    'full_name': 'New Name',
+                    'city': 'New City'
+                }
+            }
+        }
+        
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+
+@frappe.whitelist(allow_guest=False)
+def update_user_v2():
+    """Alternative update_user that uses direct request parsing"""
+    try:
+        # Check admin permission
+        if not check_admin_permission():
+            return {
+                'success': False,
+                'message': 'Access denied'
+            }
+        
+        # Get data using multiple methods
+        data = None
+        
+        # Try JSON first
+        if frappe.request:
+            try:
+                data = frappe.request.get_json()
+                if data:
+                    frappe.log_error(title="Update User V2 - Data Source", message="Using request.get_json()")
+            except:
+                pass
+        
+        # Try form_dict
+        if not data and hasattr(frappe.local, 'form_dict'):
+            data = frappe.local.form_dict
+            if data:
+                frappe.log_error(title="Update User V2 - Data Source", message="Using form_dict")
+        
+        # Validate data
+        if not data:
+            return {
+                'success': False,
+                'message': 'No data received'
+            }
+        
+        # Convert to dict if needed
+        if not isinstance(data, dict):
+            try:
+                data = dict(data)
+            except:
+                return {
+                    'success': False,
+                    'message': f'Cannot convert data to dict. Type: {type(data).__name__}'
+                }
+        
+        # Get user_id
+        user_id = data.get('user_id')
+        if not user_id:
+            return {
+                'success': False,
+                'message': 'user_id is required',
+                'received_keys': list(data.keys())
+            }
+        
+        # Check if user exists
+        user_exists = frappe.db.sql("""
+            SELECT name FROM `tabLocalMoves User`
+            WHERE name = %s OR email = %s
+            LIMIT 1
+        """, (user_id, user_id), as_dict=True)
+        
+        if not user_exists:
+            return {
+                'success': False,
+                'message': f'User not found: {user_id}'
+            }
+        
+        actual_id = user_exists[0]['name']
+        
+        # Get and update user
+        user_doc = frappe.get_doc('LocalMoves User', actual_id)
+        
+        updated = []
+        
+        if 'full_name' in data and data['full_name']:
+            user_doc.full_name = data['full_name']
+            updated.append('full_name')
+        
+        if 'phone' in data and data['phone']:
+            user_doc.phone = data['phone']
+            updated.append('phone')
+        
+        if 'role' in data and data['role']:
+            user_doc.role = data['role']
+            updated.append('role')
+        
+        if 'city' in data:
+            user_doc.city = data['city'] or ''
+            updated.append('city')
+        
+        if 'state' in data:
+            user_doc.state = data['state'] or ''
+            updated.append('state')
+        
+        if 'is_active' in data:
+            user_doc.is_active = int(data['is_active'])
+            updated.append('is_active')
+        
+        if updated:
+            user_doc.save(ignore_permissions=True)
+            frappe.db.commit()
+        
+        return {
+            'success': True,
+            'message': f'Updated: {", ".join(updated)}' if updated else 'No changes',
+            'data': {
+                'user_id': user_doc.name,
+                'email': user_doc.email,
+                'full_name': user_doc.full_name,
+                'phone': user_doc.phone,
+                'role': user_doc.role,
+                'updated_fields': updated
+            }
+        }
+        
+    except Exception as e:
+        import traceback
+        frappe.log_error(
+            title="Update User V2 Error",
+            message=traceback.format_exc()
+        )
+        frappe.db.rollback()
+        return {
+            'success': False,
+            'message': str(e),
+            'error_type': type(e).__name__
+        }
+
+"""
+Add this to dashboard.py to test the exact user lookup issue
+"""
+
+@frappe.whitelist()
+def test_user_lookup():
+    """Test if we can find and load the user"""
+    try:
+        data = get_request_data()
+        user_id = data.get('user_id')
+        
+        result = {
+            'success': True,
+            'steps': {}
+        }
+        
+        # Step 1: What user_id did we receive?
+        result['steps']['1_received_user_id'] = user_id
+        
+        # Step 2: Try frappe.db.exists
+        try:
+            exists_result = frappe.db.exists('LocalMoves User', user_id)
+            result['steps']['2_db_exists'] = {
+                'result': exists_result,
+                'type': type(exists_result).__name__
+            }
+        except Exception as e:
+            result['steps']['2_db_exists'] = {
+                'error': str(e)
+            }
+        
+        # Step 3: Try SQL by name
+        try:
+            by_name = frappe.db.sql("""
+                SELECT name, email, full_name 
+                FROM `tabLocalMoves User` 
+                WHERE name = %s
+            """, (user_id,), as_dict=True)
+            result['steps']['3_sql_by_name'] = {
+                'found': len(by_name) > 0,
+                'count': len(by_name),
+                'results': by_name
+            }
+        except Exception as e:
+            result['steps']['3_sql_by_name'] = {
+                'error': str(e)
+            }
+        
+        # Step 4: Try SQL by email
+        try:
+            by_email = frappe.db.sql("""
+                SELECT name, email, full_name 
+                FROM `tabLocalMoves User` 
+                WHERE email = %s
+            """, (user_id,), as_dict=True)
+            result['steps']['4_sql_by_email'] = {
+                'found': len(by_email) > 0,
+                'count': len(by_email),
+                'results': by_email
+            }
+        except Exception as e:
+            result['steps']['4_sql_by_email'] = {
+                'error': str(e)
+            }
+        
+        # Step 5: List all users (to see what IDs exist)
+        try:
+            all_users = frappe.db.sql("""
+                SELECT name, email, full_name 
+                FROM `tabLocalMoves User` 
+                LIMIT 5
+            """, as_dict=True)
+            result['steps']['5_all_users_sample'] = {
+                'count': len(all_users),
+                'users': all_users,
+                'note': 'Use the "name" field as user_id'
+            }
+        except Exception as e:
+            result['steps']['5_all_users_sample'] = {
+                'error': str(e)
+            }
+        
+        # Step 6: Try to get_doc if user found
+        if result['steps'].get('4_sql_by_email', {}).get('found'):
+            actual_id = by_email[0]['name']
+            result['steps']['6_correct_user_id'] = actual_id
+            
+            try:
+                user_doc = frappe.get_doc('LocalMoves User', actual_id)
+                result['steps']['7_get_doc'] = {
+                    'success': True,
+                    'name': user_doc.name,
+                    'email': user_doc.email,
+                    'full_name': user_doc.full_name,
+                    'phone': user_doc.phone if hasattr(user_doc, 'phone') else None
+                }
+            except Exception as e:
+                result['steps']['7_get_doc'] = {
+                    'success': False,
+                    'error': str(e),
+                    'error_type': type(e).__name__
+                }
+        
+        return result
+        
+    except Exception as e:
+        import traceback
+        return {
+            'success': False,
+            'error': str(e),
+            'error_type': type(e).__name__,
+            'traceback': traceback.format_exc()
+        }
+
+# ✅ Utility: Extract and validate token safely
+def get_user_from_token():
+    """Extract user from JWT token with strong validation"""
+    token = frappe.get_request_header("Authorization")
+
+    if not token:
+        frappe.throw(_("Missing Authorization header"), frappe.AuthenticationError)
+
+    if token.startswith("Bearer "):
+        token = token[7:].strip()
+
+    if not token:
+        frappe.throw(_("Empty or invalid Authorization token"), frappe.AuthenticationError)
+
+    return get_current_user(token)
+
+
+# ✅ ADMIN DASHBOARD
+@frappe.whitelist(allow_guest=False)
+def get_admin_dashboard():
+    """Get admin dashboard statistics"""
+    try:
+        user_info = get_user_from_token()
+
+        if user_info["role"] != "Admin":
+            return {"success": False, "message": "Only Admins can access dashboard"}
+
+        total_users = frappe.db.count("LocalMoves User")
+        total_admins = frappe.db.count("LocalMoves User", {"role": "Admin"})
+        total_managers = frappe.db.count("LocalMoves User", {"role": "Logistics Manager"})
+        total_regular_users = frappe.db.count("LocalMoves User", {"role": "User"})
+
+        total_companies = frappe.db.count("Logistics Company")
+        active_companies = frappe.db.count("Logistics Company", {"is_active": 1})
+
+        total_requests = frappe.db.count("Logistics Request")
+        pending_requests = frappe.db.count("Logistics Request", {"status": "Pending"})
+        assigned_requests = frappe.db.count("Logistics Request", {"status": "Assigned"})
+        in_progress_requests = frappe.db.count("Logistics Request", {"status": "In Progress"})
+        completed_requests = frappe.db.count("Logistics Request", {"status": "Completed"})
+        cancelled_requests = frappe.db.count("Logistics Request", {"status": "Cancelled"})
+
+        recent_users = frappe.get_all(
+            "LocalMoves User",
+            fields=["email", "full_name", "role", "created_at"],
+            order_by="created_at desc",
+            limit=5,
+        )
+
+        recent_requests = frappe.get_all(
+            "Logistics Request",
+            fields=["name", "user_name", "status", "pickup_city", "delivery_city", "created_at"],
+            order_by="created_at desc",
+            limit=10,
+        )
+
+        recent_companies = frappe.get_all(
+            "Logistics Company",
+            fields=["company_name", "manager_email", "location", "created_at"],
+            order_by="created_at desc",
+            limit=5,
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "users": {
+                    "total": total_users,
+                    "admins": total_admins,
+                    "managers": total_managers,
+                    "regular_users": total_regular_users,
+                },
+                "companies": {
+                    "total": total_companies,
+                    "active": active_companies,
+                    "inactive": total_companies - active_companies,
+                },
+                "requests": {
+                    "total": total_requests,
+                    "pending": pending_requests,
+                    "assigned": assigned_requests,
+                    "in_progress": in_progress_requests,
+                    "completed": completed_requests,
+                    "cancelled": cancelled_requests,
+                },
+                "recent_activities": {
+                    "users": recent_users,
+                    "requests": recent_requests,
+                    "companies": recent_companies,
+                },
+            },
+        }
+
+    except Exception as e:
+        frappe.log_error(f"Get Admin Dashboard Error: {str(e)}")
+        return {"success": False, "message": "Failed to fetch dashboard data"}
+
+
+# ✅ MANAGER DASHBOARD
+@frappe.whitelist(allow_guest=False)
+def get_manager_dashboard():
+    """Get manager dashboard statistics"""
+    try:
+        user_info = get_user_from_token()
+
+        if user_info["role"] != "Logistics Manager":
+            return {"success": False, "message": "Only Managers can access this dashboard"}
+
+        companies = frappe.get_all(
+            "Logistics Company", filters={"manager_email": user_info["email"]}, pluck="name"
+        )
+
+        if not companies:
+            return {"success": True, "data": {"message": "No company registered yet"}}
+
+        company_details = frappe.get_all(
+            "Logistics Company",
+            filters={"manager_email": user_info["email"]},
+            fields=["company_name", "phone", "pincode", "location", "is_active", "created_at"],
+        )
+
+        total_requests = frappe.db.count("Logistics Request", {"company_name": ["in", companies]})
+        assigned_requests = frappe.db.count(
+            "Logistics Request", {"company_name": ["in", companies], "status": "Assigned"}
+        )
+        accepted_requests = frappe.db.count(
+            "Logistics Request", {"company_name": ["in", companies], "status": "Accepted"}
+        )
+        in_progress = frappe.db.count(
+            "Logistics Request", {"company_name": ["in", companies], "status": "In Progress"}
+        )
+        completed = frappe.db.count(
+            "Logistics Request", {"company_name": ["in", companies], "status": "Completed"}
+        )
+
+        recent_requests = frappe.get_all(
+            "Logistics Request",
+            filters={"company_name": ["in", companies]},
+            fields=[
+                "name",
+                "user_name",
+                "user_phone",
+                "status",
+                "pickup_city",
+                "delivery_city",
+                "estimated_cost",
+                "created_at",
+                "assigned_date",
+            ],
+            order_by="created_at desc",
+            limit=10,
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "companies": company_details,
+                "requests": {
+                    "total": total_requests,
+                    "assigned": assigned_requests,
+                    "accepted": accepted_requests,
+                    "in_progress": in_progress,
+                    "completed": completed,
+                },
+                "recent_requests": recent_requests,
+            },
+        }
+
+    except Exception as e:
+        frappe.log_error(f"Get Manager Dashboard Error: {str(e)}")
+        return {"success": False, "message": "Failed to fetch dashboard data"}
+
+
+# ✅ USER DASHBOARD (fixed)
+@frappe.whitelist(allow_guest=False)
+def get_user_dashboard():
+    """Get user dashboard statistics"""
+    try:
+        user_info = get_user_from_token()
+
+        if not user_info or "email" not in user_info:
+            frappe.throw(_("Invalid or missing user information"), frappe.AuthenticationError)
+
+        email = user_info["email"]
+
+        total_requests = frappe.db.count("Logistics Request", {"user_email": email})
+        pending_requests = frappe.db.count("Logistics Request", {"user_email": email, "status": "Pending"})
+        assigned_requests = frappe.db.count("Logistics Request", {"user_email": email, "status": "Assigned"})
+        in_progress = frappe.db.count("Logistics Request", {"user_email": email, "status": "In Progress"})
+        completed = frappe.db.count("Logistics Request", {"user_email": email, "status": "Completed"})
+        cancelled = frappe.db.count("Logistics Request", {"user_email": email, "status": "Cancelled"})
+
+        recent_requests = frappe.get_all(
+            "Logistics Request",
+            filters={"user_email": email},
+            fields=[
+                "name",
+                "pickup_city",
+                "delivery_city",
+                "status",
+                "company_name",
+                "estimated_cost",
+                "actual_cost",
+                "created_at",
+                "delivery_date",
+            ],
+            order_by="created_at desc",
+            limit=10,
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "requests": {
+                    "total": total_requests,
+                    "pending": pending_requests,
+                    "assigned": assigned_requests,
+                    "in_progress": in_progress,
+                    "completed": completed,
+                    "cancelled": cancelled,
+                },
+                "recent_requests": recent_requests,
+            },
+        }
+
+    except frappe.AuthenticationError:
+        # handled automatically, but log for clarity
+        frappe.log_error("User dashboard authentication failed")
+        return {"success": False, "message": "Unauthorized access"}
+    except Exception as e:
+        frappe.log_error(f"Get User Dashboard Error: {str(e)}")
+        return {"success": False, "message": "Failed to fetch dashboard data"}
+
+
+# ===== INVENTORY CRUD OPERATIONS (Admin Only) =====
+# Add these functions to your dashboard.py file
+
+@frappe.whitelist(allow_guest=False)
+def get_all_inventory_items():
+    """Get all inventory items with optional category filter - Admin only"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to view inventory items'
+            }
+        
+        data = get_request_data()
+        filters = {}
+        
+        # Optional category filter
+        if data.get('category'):
+            filters['category'] = data.get('category')
+        
+        items = frappe.get_all('Moving Inventory Item',
+            fields=['name', 'category', 'item_name', 'average_volume', 'unit', 'creation', 'modified'],
+            filters=filters,
+            order_by='category asc, item_name asc'
+        )
+        
+        # Get category summary
+        category_summary = frappe.db.sql("""
+            SELECT category, COUNT(*) as count, SUM(average_volume) as total_volume
+            FROM `tabMoving Inventory Item`
+            GROUP BY category
+            ORDER BY category ASC
+        """, as_dict=True)
+        
+        return {
+            'success': True, 
+            'data': items, 
+            'count': len(items),
+            'category_summary': category_summary
+        }
+    except Exception as e:
+        frappe.log_error(f"Get Inventory Items Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def get_inventory_item():
+    """Get a single inventory item by name - Admin only"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to view inventory items'
+            }
+        
+        item_name = frappe.local.form_dict.get('item_name')
+        if not item_name:
+            return {'success': False, 'message': 'Item name is required'}
+
+        if not frappe.db.exists('Moving Inventory Item', item_name):
+            return {'success': False, 'message': 'Inventory item not found'}
+        
+        item = frappe.get_doc('Moving Inventory Item', item_name)
+        return {'success': True, 'data': item.as_dict()}
+    except Exception as e:
+        frappe.log_error(f"Get Inventory Item Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def create_inventory_item():
+    """Create a new inventory item - Admin only"""
+    try:
+        ensure_session_data()
+        
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to create inventory items'
+            }
+        
+        data = get_request_data()
+        
+        # Validate required fields
+        required_fields = ['category', 'item_name', 'average_volume']
+        for field in required_fields:
+            if not data.get(field):
+                return {'success': False, 'message': f'{field} is required'}
+        
+        # Validate category
+        valid_categories = [
+            'Living Room', 
+            'Kitchen', 
+            'Other / Bathroom / Hallway', 
+            'Garden / Garage / Loft', 
+            'Bedroom'
+        ]
+        if data.get('category') not in valid_categories:
+            return {
+                'success': False, 
+                'message': f'Invalid category. Must be one of: {", ".join(valid_categories)}'
+            }
+        
+        # Check if item already exists
+        if frappe.db.exists('Moving Inventory Item', {'item_name': data.get('item_name')}):
+            return {'success': False, 'message': 'Item with this name already exists'}
+        
+        # Create new item
+        item_doc = frappe.new_doc('Moving Inventory Item')
+        item_doc.category = data.get('category')
+        item_doc.item_name = data.get('item_name')
+        item_doc.average_volume = float(data.get('average_volume'))
+        item_doc.unit = data.get('unit', 'm³')
+        
+        item_doc.flags.ignore_version = True
+        item_doc.insert(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True, 
+            'message': 'Inventory item created successfully', 
+            'data': item_doc.as_dict()
+        }
+    except ValueError:
+        return {'success': False, 'message': 'average_volume must be a valid number'}
+    except Exception as e:
+        frappe.log_error(f"Create Inventory Item Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def update_inventory_item():
+    """Update an existing inventory item - Admin only"""
+    try:
+        ensure_session_data()
+        
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to update inventory items'
+            }
+        
+        data = get_request_data()
+        item_name = data.get('item_name')
+        
+        if not item_name:
+            return {'success': False, 'message': 'item_name is required'}
+        
+        if not frappe.db.exists('Moving Inventory Item', item_name):
+            return {'success': False, 'message': 'Inventory item not found'}
+        
+        item_doc = frappe.get_doc('Moving Inventory Item', item_name)
+        
+        updated_fields = []
+        
+        # Update category
+        if 'category' in data and data.get('category'):
+            valid_categories = [
+                'Living Room', 
+                'Kitchen', 
+                'Other / Bathroom / Hallway', 
+                'Garden / Garage / Loft', 
+                'Bedroom'
+            ]
+            if data.get('category') not in valid_categories:
+                return {
+                    'success': False, 
+                    'message': f'Invalid category. Must be one of: {", ".join(valid_categories)}'
+                }
+            item_doc.category = data.get('category')
+            updated_fields.append('category')
+        
+        # Update average_volume
+        if 'average_volume' in data and data.get('average_volume'):
+            try:
+                item_doc.average_volume = float(data.get('average_volume'))
+                updated_fields.append('average_volume')
+            except ValueError:
+                return {'success': False, 'message': 'average_volume must be a valid number'}
+        
+        # Update unit
+        if 'unit' in data and data.get('unit'):
+            item_doc.unit = data.get('unit')
+            updated_fields.append('unit')
+        
+        # Update new_item_name (rename)
+        if 'new_item_name' in data and data.get('new_item_name'):
+            new_name = data.get('new_item_name')
+            if new_name != item_name:
+                # Check if new name already exists
+                if frappe.db.exists('Moving Inventory Item', {'item_name': new_name}):
+                    return {'success': False, 'message': 'An item with this name already exists'}
+                item_doc.item_name = new_name
+                updated_fields.append('item_name')
+        
+        if not updated_fields:
+            return {
+                'success': True, 
+                'message': 'No fields to update',
+                'data': item_doc.as_dict()
+            }
+        
+        item_doc.flags.ignore_version = True
+        item_doc.save(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True, 
+            'message': f'Inventory item updated successfully. Updated fields: {", ".join(updated_fields)}',
+            'data': item_doc.as_dict(),
+            'updated_fields': updated_fields
+        }
+    except Exception as e:
+        frappe.log_error(f"Update Inventory Item Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def delete_inventory_item():
+    """Delete an inventory item - Admin only"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to delete inventory items'
+            }
+        
+        data = get_request_data()
+        item_name = data.get('item_name')
+        
+        if not item_name:
+            return {'success': False, 'message': 'item_name is required'}
+        
+        if not frappe.db.exists('Moving Inventory Item', item_name):
+            return {'success': False, 'message': 'Inventory item not found'}
+        
+        frappe.delete_doc('Moving Inventory Item', item_name, ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {'success': True, 'message': 'Inventory item deleted successfully'}
+    except Exception as e:
+        frappe.log_error(f"Delete Inventory Item Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def bulk_create_inventory_items():
+    """Bulk create inventory items - Admin only"""
+    try:
+        ensure_session_data()
+        
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to create inventory items'
+            }
+        
+        data = get_request_data()
+        items = data.get('items')
+        
+        if not items:
+            return {'success': False, 'message': 'items array is required'}
+        
+        import json
+        if isinstance(items, str):
+            items = json.loads(items)
+        
+        created = 0
+        errors = []
+        created_items = []
+        
+        for item in items:
+            try:
+                # Validate required fields
+                if not item.get('category') or not item.get('item_name') or not item.get('average_volume'):
+                    errors.append({
+                        'item': item.get('item_name', 'Unknown'),
+                        'error': 'Missing required fields'
+                    })
+                    continue
+                
+                # Check if already exists
+                if frappe.db.exists('Moving Inventory Item', {'item_name': item.get('item_name')}):
+                    errors.append({
+                        'item': item.get('item_name'),
+                        'error': 'Item already exists'
+                    })
+                    continue
+                
+                item_doc = frappe.new_doc('Moving Inventory Item')
+                item_doc.category = item.get('category')
+                item_doc.item_name = item.get('item_name')
+                item_doc.average_volume = float(item.get('average_volume'))
+                item_doc.unit = item.get('unit', 'm³')
+                
+                item_doc.flags.ignore_version = True
+                item_doc.insert(ignore_permissions=True)
+                created += 1
+                created_items.append(item_doc.as_dict())
+                
+            except Exception as e:
+                errors.append({
+                    'item': item.get('item_name', 'Unknown'),
+                    'error': str(e)
+                })
+        
+        frappe.db.commit()
+        
+        return {
+            'success': True,
+            'message': f'Bulk upload completed. Created {created} items, {len(errors)} errors',
+            'created_count': created,
+            'error_count': len(errors),
+            'created_items': created_items,
+            'errors': errors
+        }
+    except Exception as e:
+        frappe.log_error(f"Bulk Create Inventory Items Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def get_inventory_categories():
+    """Get all available inventory categories - Admin only"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to view inventory categories'
+            }
+        
+        categories = frappe.db.sql("""
+            SELECT DISTINCT category, COUNT(*) as item_count
+            FROM `tabMoving Inventory Item`
+            GROUP BY category
+            ORDER BY category ASC
+        """, as_dict=True)
+        
+        return {
+            'success': True,
+            'data': categories,
+            'count': len(categories)
+        }
+    except Exception as e:
+        frappe.log_error(f"Get Inventory Categories Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def search_inventory_items():
+    """Search inventory items by name or category - Admin only"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to search inventory items'
+            }
+        
+        data = get_request_data()
+        search_term = data.get('search_term', '')
+        category = data.get('category')
+        
+        filters = []
+        filter_values = []
+        
+        if search_term:
+            filters.append("item_name LIKE %s")
+            filter_values.append(f"%{search_term}%")
+        
+        if category:
+            filters.append("category = %s")
+            filter_values.append(category)
+        
+        where_clause = " AND ".join(filters) if filters else "1=1"
+        
+        items = frappe.db.sql(f"""
+            SELECT name, category, item_name, average_volume, unit
+            FROM `tabMoving Inventory Item`
+            WHERE {where_clause}
+            ORDER BY category ASC, item_name ASC
+        """, tuple(filter_values), as_dict=True)
+        
+        return {
+            'success': True,
+            'data': items,
+            'count': len(items),
+            'search_term': search_term,
+            'category': category
+        }
+    except Exception as e:
+        frappe.log_error(f"Search Inventory Items Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def get_inventory_statistics():
+    """Get inventory statistics - Admin only"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to view inventory statistics'
+            }
+        
+        total_items = frappe.db.count('Moving Inventory Item')
+        
+        category_stats = frappe.db.sql("""
+            SELECT 
+                category,
+                COUNT(*) as item_count,
+                AVG(average_volume) as avg_volume,
+                MIN(average_volume) as min_volume,
+                MAX(average_volume) as max_volume,
+                SUM(average_volume) as total_volume
+            FROM `tabMoving Inventory Item`
+            GROUP BY category
+            ORDER BY item_count DESC
+        """, as_dict=True)
+        
+        largest_items = frappe.get_all('Moving Inventory Item',
+            fields=['item_name', 'category', 'average_volume'],
+            order_by='average_volume desc',
+            limit=10
+        )
+        
+        smallest_items = frappe.get_all('Moving Inventory Item',
+            fields=['item_name', 'category', 'average_volume'],
+            order_by='average_volume asc',
+            limit=10
+        )
+        
+        recently_added = frappe.get_all('Moving Inventory Item',
+            fields=['item_name', 'category', 'average_volume', 'creation'],
+            order_by='creation desc',
+            limit=10
+        )
+        
+        return {
+            'success': True,
+            'statistics': {
+                'total_items': total_items,
+                'category_breakdown': category_stats,
+                'largest_items': largest_items,
+                'smallest_items': smallest_items,
+                'recently_added': recently_added
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Get Inventory Statistics Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+    
+# ===== RATING & REVIEW ADMIN CRUD OPERATIONS =====
+
+@frappe.whitelist(allow_guest=False)
+def get_all_ratings_and_reviews():
+    """Get all ratings and reviews across all companies - Admin only"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to view all reviews'
+            }
+        
+        data = get_request_data()
+        
+        # Optional filters
+        company_name = data.get('company_name')
+        min_rating = data.get('min_rating')
+        max_rating = data.get('max_rating')
+        status = data.get('status')
+        limit = data.get('limit', 50)
+        offset = data.get('offset', 0)
+        
+        # Build SQL query with filters
+        filters = []
+        filter_values = {'limit': limit, 'offset': offset}
+        
+        if company_name:
+            filters.append("company_name = %(company_name)s")
+            filter_values['company_name'] = company_name
+        
+        if min_rating:
+            filters.append("rating >= %(min_rating)s")
+            filter_values['min_rating'] = min_rating
+        
+        if max_rating:
+            filters.append("rating <= %(max_rating)s")
+            filter_values['max_rating'] = max_rating
+        
+        if status:
+            filters.append("status = %(status)s")
+            filter_values['status'] = status
+        
+        where_clause = " AND ".join(filters) if filters else "1=1"
+        
+        # Get all rated requests
+        reviews = frappe.db.sql(f"""
+            SELECT 
+                name as request_id,
+                company_name,
+                rating,
+                review_comment,
+                service_aspects,
+                rated_at,
+                rating_updated_at,
+                full_name as user_name,
+                user_email,
+                user_phone,
+                status,
+                completed_at,
+                pickup_city,
+                delivery_city,
+                pickup_address,
+                delivery_address,
+                estimated_cost,
+                actual_cost,
+                created_at
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL
+            AND rating > 0
+            AND {where_clause}
+            ORDER BY rated_at DESC
+            LIMIT %(limit)s OFFSET %(offset)s
+        """, filter_values, as_dict=True)
+        
+        # Get total count
+        count_result = frappe.db.sql(f"""
+            SELECT COUNT(*) as total
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL
+            AND rating > 0
+            AND {where_clause}
+        """, filter_values, as_dict=True)
+        
+        total_count = count_result[0]['total'] if count_result else 0
+        
+        # Parse service aspects JSON
+        for review in reviews:
+            if review.get('service_aspects'):
+                try:
+                    review['service_aspects'] = json.loads(review['service_aspects'])
+                except:
+                    review['service_aspects'] = {}
+        
+        # Get summary statistics
+        stats = frappe.db.sql("""
+            SELECT 
+                COUNT(*) as total_reviews,
+                AVG(rating) as avg_rating,
+                MIN(rating) as min_rating,
+                MAX(rating) as max_rating,
+                COUNT(DISTINCT company_name) as companies_with_reviews,
+                COUNT(DISTINCT user_email) as unique_reviewers
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL AND rating > 0
+        """, as_dict=True)[0]
+        
+        # Rating distribution
+        rating_dist = frappe.db.sql("""
+            SELECT rating, COUNT(*) as count
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL AND rating > 0
+            GROUP BY rating
+            ORDER BY rating DESC
+        """, as_dict=True)
+        
+        return {
+            'success': True,
+            'data': reviews,
+            'pagination': {
+                'total': total_count,
+                'limit': limit,
+                'offset': offset,
+                'current_page': (offset // limit) + 1 if limit > 0 else 1,
+                'total_pages': (total_count + limit - 1) // limit if limit > 0 else 1
+            },
+            'statistics': {
+                'total_reviews': stats['total_reviews'],
+                'average_rating': round(stats['avg_rating'], 2) if stats['avg_rating'] else 0,
+                'min_rating': stats['min_rating'],
+                'max_rating': stats['max_rating'],
+                'companies_with_reviews': stats['companies_with_reviews'],
+                'unique_reviewers': stats['unique_reviewers'],
+                'rating_distribution': rating_dist
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Get All Reviews Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def get_review_by_request_id():
+    """Get a single review by request ID - Admin only"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to view reviews'
+            }
+        
+        request_id = frappe.local.form_dict.get('request_id')
+        if not request_id:
+            return {'success': False, 'message': 'request_id is required'}
+        
+        if not frappe.db.exists('Logistics Request', request_id):
+            return {'success': False, 'message': 'Request not found'}
+        
+        # Get review details
+        review = frappe.db.sql("""
+            SELECT 
+                name as request_id,
+                company_name,
+                rating,
+                review_comment,
+                service_aspects,
+                rated_at,
+                rating_updated_at,
+                full_name as user_name,
+                user_email,
+                user_phone,
+                status,
+                completed_at,
+                pickup_city,
+                delivery_city,
+                pickup_address,
+                delivery_address,
+                estimated_cost,
+                actual_cost,
+                created_at,
+                assigned_date
+            FROM `tabLogistics Request`
+            WHERE name = %s
+        """, (request_id,), as_dict=True)
+        
+        if not review:
+            return {'success': False, 'message': 'Review not found'}
+        
+        review = review[0]
+        
+        # Parse service aspects
+        if review.get('service_aspects'):
+            try:
+                review['service_aspects'] = json.loads(review['service_aspects'])
+            except:
+                review['service_aspects'] = {}
+        
+        # Check if review exists
+        has_review = bool(review.get('rating') and review.get('rating') > 0)
+        
+        return {
+            'success': True,
+            'data': review,
+            'has_review': has_review
+        }
+    except Exception as e:
+        frappe.log_error(f"Get Review Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def admin_update_review():
+    """Update a review as admin - Admin only"""
+    try:
+        ensure_session_data()
+        
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to update reviews'
+            }
+        
+        data = get_request_data()
+        request_id = data.get('request_id')
+        
+        if not request_id:
+            return {'success': False, 'message': 'request_id is required'}
+        
+        if not frappe.db.exists('Logistics Request', request_id):
+            return {'success': False, 'message': 'Request not found'}
+        
+        request_doc = frappe.get_doc('Logistics Request', request_id)
+        
+        updated_fields = []
+        
+        # Update rating
+        if 'rating' in data:
+            try:
+                new_rating = int(data.get('rating'))
+                if new_rating < 1 or new_rating > 5:
+                    return {'success': False, 'message': 'Rating must be between 1 and 5'}
+                request_doc.db_set('rating', new_rating, update_modified=False)
+                updated_fields.append('rating')
+            except (ValueError, TypeError):
+                return {'success': False, 'message': 'Invalid rating format'}
+        
+        # Update review comment
+        if 'review_comment' in data:
+            review_comment = data.get('review_comment') or ''
+            if len(review_comment) > 1000:
+                return {'success': False, 'message': 'Review comment too long (max 1000 characters)'}
+            request_doc.db_set('review_comment', review_comment, update_modified=False)
+            updated_fields.append('review_comment')
+        
+        # Update service aspects
+        if 'service_aspects' in data:
+            service_aspects = data.get('service_aspects')
+            if isinstance(service_aspects, dict):
+                request_doc.db_set('service_aspects', json.dumps(service_aspects), update_modified=False)
+                updated_fields.append('service_aspects')
+            elif isinstance(service_aspects, str):
+                # Already JSON string
+                request_doc.db_set('service_aspects', service_aspects, update_modified=False)
+                updated_fields.append('service_aspects')
+        
+        if updated_fields:
+            request_doc.db_set('rating_updated_at', datetime.now(), update_modified=False)
+            frappe.db.commit()
+            
+            # Recalculate company average
+            if request_doc.company_name:
+                from localmoves.api.rating_review import update_company_average_rating
+                update_company_average_rating(request_doc.company_name)
+        
+        return {
+            'success': True,
+            'message': f'Review updated successfully. Updated fields: {", ".join(updated_fields)}',
+            'updated_fields': updated_fields,
+            'data': {
+                'request_id': request_id,
+                'rating': request_doc.rating,
+                'review_comment': request_doc.review_comment
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Admin Update Review Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def admin_delete_review():
+    """Delete a review as admin - Admin only"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to delete reviews'
+            }
+        
+        data = get_request_data()
+        request_id = data.get('request_id')
+        
+        if not request_id:
+            return {'success': False, 'message': 'request_id is required'}
+        
+        if not frappe.db.exists('Logistics Request', request_id):
+            return {'success': False, 'message': 'Request not found'}
+        
+        request_doc = frappe.get_doc('Logistics Request', request_id)
+        
+        # Check if review exists
+        if not request_doc.rating or request_doc.rating == 0:
+            return {'success': False, 'message': 'No review found for this request'}
+        
+        company_name = request_doc.company_name
+        
+        # Clear all review fields
+        request_doc.db_set('rating', None, update_modified=False)
+        request_doc.db_set('review_comment', None, update_modified=False)
+        request_doc.db_set('service_aspects', None, update_modified=False)
+        request_doc.db_set('rated_at', None, update_modified=False)
+        request_doc.db_set('rating_updated_at', None, update_modified=False)
+        
+        frappe.db.commit()
+        
+        # Recalculate company average
+        if company_name:
+            from localmoves.api.rating_review import update_company_average_rating
+            update_company_average_rating(company_name)
+        
+        return {
+            'success': True,
+            'message': 'Review deleted successfully',
+            'request_id': request_id
+        }
+    except Exception as e:
+        frappe.log_error(f"Admin Delete Review Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def get_reviews_by_company():
+    """Get all reviews for a specific company - Admin only"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to view reviews'
+            }
+        
+        data = get_request_data()
+        company_name = data.get('company_name')
+        
+        if not company_name:
+            return {'success': False, 'message': 'company_name is required'}
+        
+        if not frappe.db.exists('Logistics Company', company_name):
+            return {'success': False, 'message': 'Company not found'}
+        
+        reviews = frappe.db.sql("""
+            SELECT 
+                name as request_id,
+                rating,
+                review_comment,
+                service_aspects,
+                rated_at,
+                rating_updated_at,
+                full_name as user_name,
+                user_email,
+                status,
+                completed_at,
+                pickup_city,
+                delivery_city
+            FROM `tabLogistics Request`
+            WHERE company_name = %s
+            AND rating IS NOT NULL
+            AND rating > 0
+            ORDER BY rated_at DESC
+        """, (company_name,), as_dict=True)
+        
+        # Parse service aspects
+        for review in reviews:
+            if review.get('service_aspects'):
+                try:
+                    review['service_aspects'] = json.loads(review['service_aspects'])
+                except:
+                    review['service_aspects'] = {}
+        
+        # Get company rating summary
+        company = frappe.get_doc('Logistics Company', company_name)
+        
+        return {
+            'success': True,
+            'company_name': company_name,
+            'rating_summary': {
+                'average_rating': getattr(company, 'average_rating', 0),
+                'total_ratings': getattr(company, 'total_ratings', 0)
+            },
+            'data': reviews,
+            'count': len(reviews)
+        }
+    except Exception as e:
+        frappe.log_error(f"Get Company Reviews Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def get_reviews_by_user():
+    """Get all reviews submitted by a specific user - Admin only"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to view reviews'
+            }
+        
+        data = get_request_data()
+        user_email = data.get('user_email')
+        
+        if not user_email:
+            return {'success': False, 'message': 'user_email is required'}
+        
+        reviews = frappe.db.sql("""
+            SELECT 
+                name as request_id,
+                company_name,
+                rating,
+                review_comment,
+                service_aspects,
+                rated_at,
+                rating_updated_at,
+                status,
+                completed_at,
+                pickup_city,
+                delivery_city
+            FROM `tabLogistics Request`
+            WHERE user_email = %s
+            AND rating IS NOT NULL
+            AND rating > 0
+            ORDER BY rated_at DESC
+        """, (user_email,), as_dict=True)
+        
+        # Parse service aspects
+        for review in reviews:
+            if review.get('service_aspects'):
+                try:
+                    review['service_aspects'] = json.loads(review['service_aspects'])
+                except:
+                    review['service_aspects'] = {}
+        
+        # Get user statistics
+        stats = frappe.db.sql("""
+            SELECT 
+                COUNT(*) as total_reviews,
+                AVG(rating) as avg_rating_given,
+                COUNT(DISTINCT company_name) as companies_reviewed
+            FROM `tabLogistics Request`
+            WHERE user_email = %s
+            AND rating IS NOT NULL
+            AND rating > 0
+        """, (user_email,), as_dict=True)[0]
+        
+        return {
+            'success': True,
+            'user_email': user_email,
+            'statistics': {
+                'total_reviews': stats['total_reviews'],
+                'average_rating_given': round(stats['avg_rating_given'], 2) if stats['avg_rating_given'] else 0,
+                'companies_reviewed': stats['companies_reviewed']
+            },
+            'data': reviews,
+            'count': len(reviews)
+        }
+    except Exception as e:
+        frappe.log_error(f"Get User Reviews Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def bulk_delete_reviews():
+    """Bulk delete reviews - Admin only"""
+    try:
+        ensure_session_data()
+        
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to delete reviews'
+            }
+        
+        data = get_request_data()
+        request_ids = data.get('request_ids', [])
+        
+        if not request_ids:
+            return {'success': False, 'message': 'request_ids array is required'}
+        
+        if isinstance(request_ids, str):
+            request_ids = json.loads(request_ids)
+        
+        deleted_count = 0
+        errors = []
+        affected_companies = set()
+        
+        for request_id in request_ids:
+            try:
+                if not frappe.db.exists('Logistics Request', request_id):
+                    errors.append({'request_id': request_id, 'error': 'Request not found'})
+                    continue
+                
+                request_doc = frappe.get_doc('Logistics Request', request_id)
+                
+                if not request_doc.rating or request_doc.rating == 0:
+                    errors.append({'request_id': request_id, 'error': 'No review to delete'})
+                    continue
+                
+                if request_doc.company_name:
+                    affected_companies.add(request_doc.company_name)
+                
+                # Clear review fields
+                request_doc.db_set('rating', None, update_modified=False)
+                request_doc.db_set('review_comment', None, update_modified=False)
+                request_doc.db_set('service_aspects', None, update_modified=False)
+                request_doc.db_set('rated_at', None, update_modified=False)
+                request_doc.db_set('rating_updated_at', None, update_modified=False)
+                
+                deleted_count += 1
+                
+            except Exception as e:
+                errors.append({'request_id': request_id, 'error': str(e)})
+        
+        frappe.db.commit()
+        
+        # Recalculate company averages
+        from localmoves.api.rating_review import update_company_average_rating
+        for company_name in affected_companies:
+            update_company_average_rating(company_name)
+        
+        return {
+            'success': True,
+            'message': f'Deleted {deleted_count} reviews successfully',
+            'deleted_count': deleted_count,
+            'error_count': len(errors),
+            'errors': errors,
+            'affected_companies': list(affected_companies)
+        }
+    except Exception as e:
+        frappe.log_error(f"Bulk Delete Reviews Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def get_review_statistics():
+    """Get comprehensive review statistics - Admin only"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to view review statistics'
+            }
+        
+        # Overall statistics
+        overall_stats = frappe.db.sql("""
+            SELECT 
+                COUNT(*) as total_reviews,
+                AVG(rating) as avg_rating,
+                MIN(rating) as min_rating,
+                MAX(rating) as max_rating,
+                COUNT(DISTINCT company_name) as companies_with_reviews,
+                COUNT(DISTINCT user_email) as unique_reviewers
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL AND rating > 0
+        """, as_dict=True)[0]
+        
+        # Rating distribution
+        rating_distribution = frappe.db.sql("""
+            SELECT rating, COUNT(*) as count
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL AND rating > 0
+            GROUP BY rating
+            ORDER BY rating DESC
+        """, as_dict=True)
+        
+        # Top rated companies
+        top_companies = frappe.db.sql("""
+            SELECT 
+                company_name,
+                AVG(rating) as avg_rating,
+                COUNT(*) as review_count
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL AND rating > 0
+            AND company_name IS NOT NULL
+            GROUP BY company_name
+            HAVING COUNT(*) >= 3
+            ORDER BY avg_rating DESC, review_count DESC
+            LIMIT 10
+        """, as_dict=True)
+        
+        # Recent reviews
+        recent_reviews = frappe.db.sql("""
+            SELECT 
+                name as request_id,
+                company_name,
+                rating,
+                review_comment,
+                rated_at,
+                user_email,
+                full_name as user_name
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL AND rating > 0
+            ORDER BY rated_at DESC
+            LIMIT 10
+        """, as_dict=True)
+        
+        # Reviews by status
+        reviews_by_status = frappe.db.sql("""
+            SELECT 
+                status,
+                COUNT(*) as review_count,
+                AVG(rating) as avg_rating
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL AND rating > 0
+            GROUP BY status
+            ORDER BY review_count DESC
+        """, as_dict=True)
+        
+        # Monthly review trends (last 12 months)
+        monthly_trends = frappe.db.sql("""
+            SELECT 
+                DATE_FORMAT(rated_at, '%Y-%m') as month,
+                COUNT(*) as review_count,
+                AVG(rating) as avg_rating
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL 
+            AND rating > 0
+            AND rated_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+            GROUP BY DATE_FORMAT(rated_at, '%Y-%m')
+            ORDER BY month ASC
+        """, as_dict=True)
+        
+        return {
+            'success': True,
+            'statistics': {
+                'overall': {
+                    'total_reviews': overall_stats['total_reviews'],
+                    'average_rating': round(overall_stats['avg_rating'], 2) if overall_stats['avg_rating'] else 0,
+                    'min_rating': overall_stats['min_rating'],
+                    'max_rating': overall_stats['max_rating'],
+                    'companies_with_reviews': overall_stats['companies_with_reviews'],
+                    'unique_reviewers': overall_stats['unique_reviewers']
+                },
+                'rating_distribution': rating_distribution,
+                'top_rated_companies': top_companies,
+                'recent_reviews': recent_reviews,
+                'reviews_by_status': reviews_by_status,
+                'monthly_trends': monthly_trends
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Get Review Statistics Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def search_reviews():
+    """Search reviews by various criteria - Admin only"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to search reviews'
+            }
+        
+        data = get_request_data()
+        
+        search_term = data.get('search_term', '')
+        company_name = data.get('company_name')
+        user_email = data.get('user_email')
+        min_rating = data.get('min_rating')
+        max_rating = data.get('max_rating')
+        date_from = data.get('date_from')
+        date_to = data.get('date_to')
+        
+        filters = []
+        filter_values = {}
+        
+        if search_term:
+            filters.append("(review_comment LIKE %(search_term)s OR full_name LIKE %(search_term)s)")
+            filter_values['search_term'] = f"%{search_term}%"
+        
+        if company_name:
+            filters.append("company_name = %(company_name)s")
+            filter_values['company_name'] = company_name
+        
+        if user_email:
+            filters.append("user_email = %(user_email)s")
+            filter_values['user_email'] = user_email
+        
+        if min_rating:
+            filters.append("rating >= %(min_rating)s")
+            filter_values['min_rating'] = min_rating
+        
+        if max_rating:
+            filters.append("rating <= %(max_rating)s")
+            filter_values['max_rating'] = max_rating
+        
+        if date_from:
+            filters.append("DATE(rated_at) >= %(date_from)s")
+            filter_values['date_from'] = date_from
+        
+        if date_to:
+            filters.append("DATE(rated_at) <= %(date_to)s")
+            filter_values['date_to'] = date_to
+        
+        where_clause = " AND ".join(filters) if filters else "1=1"
+        
+        results = frappe.db.sql(f"""
+            SELECT 
+                name as request_id,
+                company_name,
+                rating,
+                review_comment,
+                service_aspects,
+                rated_at,
+                full_name as user_name,
+                user_email,
+                status,
+                pickup_city,
+                delivery_city
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL
+            AND rating > 0
+            AND {where_clause}
+            ORDER BY rated_at DESC
+            LIMIT 100
+        """, filter_values, as_dict=True)
+        
+        # Parse service aspects
+        for review in results:
+            if review.get('service_aspects'):
+                try:
+                    review['service_aspects'] = json.loads(review['service_aspects'])
+                except:
+                    review['service_aspects'] = {}
+        
+        return {
+            'success': True,
+            'data': results,
+            'count': len(results),
+            'search_criteria': {
+                'search_term': search_term,
+                'company_name': company_name,
+                'user_email': user_email,
+                'min_rating': min_rating,
+                'max_rating': max_rating,
+                'date_from': date_from,
+                'date_to': date_to
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Search Reviews Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+
+@frappe.whitelist(allow_guest=False)
+def get_review_statistics():
+    """Get comprehensive review statistics - Admin only"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to view review statistics'
+            }
+        
+        # Overall statistics
+        overall_stats = frappe.db.sql("""
+            SELECT 
+                COUNT(*) as total_reviews,
+                AVG(rating) as avg_rating,
+                MIN(rating) as min_rating,
+                MAX(rating) as max_rating,
+                COUNT(DISTINCT company_name) as companies_with_reviews,
+                COUNT(DISTINCT user_email) as unique_reviewers
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL AND rating > 0
+        """, as_dict=True)[0]
+        
+        # Rating distribution
+        rating_distribution = frappe.db.sql("""
+            SELECT rating, COUNT(*) as count
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL AND rating > 0
+            GROUP BY rating
+            ORDER BY rating DESC
+        """, as_dict=True)
+        
+        # Top rated companies
+        top_companies = frappe.db.sql("""
+            SELECT 
+                company_name,
+                AVG(rating) as avg_rating,
+                COUNT(*) as review_count
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL AND rating > 0
+            AND company_name IS NOT NULL
+            GROUP BY company_name
+            HAVING COUNT(*) >= 3
+            ORDER BY avg_rating DESC, review_count DESC
+            LIMIT 10
+        """, as_dict=True)
+        
+        # Recent reviews
+        recent_reviews = frappe.db.sql("""
+            SELECT 
+                name as request_id,
+                company_name,
+                rating,
+                review_comment,
+                rated_at,
+                user_email,
+                full_name as user_name
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL AND rating > 0
+            ORDER BY rated_at DESC
+            LIMIT 10
+        """, as_dict=True)
+        
+        # Reviews by status
+        reviews_by_status = frappe.db.sql("""
+            SELECT 
+                status,
+                COUNT(*) as review_count,
+                AVG(rating) as avg_rating
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL AND rating > 0
+            GROUP BY status
+            ORDER BY review_count DESC
+        """, as_dict=True)
+        
+        # Monthly review trends (last 12 months)
+        monthly_trends = frappe.db.sql("""
+            SELECT 
+                DATE_FORMAT(rated_at, '%Y-%m') as month,
+                COUNT(*) as review_count,
+                AVG(rating) as avg_rating
+            FROM `tabLogistics Request`
+            WHERE rating IS NOT NULL 
+            AND rating > 0
+            AND rated_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+            GROUP BY DATE_FORMAT(rated_at, '%Y-%m')
+            ORDER BY month ASC
+        """, as_dict=True)
+        
+        return {
+            'success': True,
+            'statistics': {
+                'overall': {
+                    'total_reviews': overall_stats['total_reviews'],
+                    'average_rating': round(overall_stats['avg_rating'], 2) if overall_stats['avg_rating'] else 0,
+                    'min_rating': overall_stats['min_rating'],
+                    'max_rating': overall_stats['max_rating'],
+                    'companies_with_reviews': overall_stats['companies_with_reviews'],
+                    'unique_reviewers': overall_stats['unique_reviewers']
+                },
+                'rating_distribution': rating_distribution,
+                'top_rated_companies': top_companies,
+                'recent_reviews': recent_reviews,
+                'reviews_by_status': reviews_by_status,
+                'monthly_trends': monthly_trends
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Get Review Statistics Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+# ===== CONTACT US API =====
+
+@frappe.whitelist(allow_guest=True)
+def submit_contact_form():
+    """Public API - Anyone can submit a contact form"""
+    try:
+        ensure_session_data()
+        
+        data = get_request_data()
+        
+        # Validate required fields
+        required_fields = ['name', 'email', 'message']
+        for field in required_fields:
+            if not data.get(field):
+                return {'success': False, 'message': f'{field} is required'}
+        
+        # Validate email format
+        email = data.get('email')
+        if not frappe.utils.validate_email_address(email):
+            return {'success': False, 'message': 'Invalid email address'}
+        
+        # Create contact us record
+        contact_doc = frappe.new_doc('Contact Us')
+        contact_doc.name_of_sender = data.get('name')
+        contact_doc.email = email
+        contact_doc.message = data.get('message')
+        contact_doc.status = 'New'
+        
+        contact_doc.flags.ignore_version = True
+        contact_doc.insert(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True, 
+            'message': 'Thank you for contacting us! We will get back to you soon.',
+            'data': {
+                'id': contact_doc.name,
+                'name': contact_doc.name_of_sender,
+                'email': contact_doc.email,
+                'status': contact_doc.status,
+                'created_at': contact_doc.created_at
+            }
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Submit Contact Form Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist()
+def get_all_contact_submissions():
+    """Admin only - Get all contact form submissions"""
+    try:
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: Admin permission required'
+            }
+        
+        data = get_request_data()
+        filters = {}
+        
+        if data.get('status'):
+            filters['status'] = data.get('status')
+        
+        contacts = frappe.get_all('Contact Us',
+            fields=['name', 'name_of_sender', 'email', 'message', 'status', 
+                    'admin_response', 'created_at', 'responded_at'],
+            filters=filters,
+            order_by='created_at desc'
+        )
+        
+        return {'success': True, 'data': contacts, 'count': len(contacts)}
+        
+    except Exception as e:
+        frappe.log_error(f"Get Contact Submissions Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+
+@frappe.whitelist()
+def get_contact_submission():
+    """Admin only - Get a single contact submission by ID"""
+    try:
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: Admin permission required'
+            }
+        
+        # Try multiple methods to get contact_id
+        contact_id = None
+        
+        # Method 1: form_dict
+        if hasattr(frappe, 'form_dict') and frappe.form_dict:
+            contact_id = frappe.form_dict.get('contact_id')
+        
+        # Method 2: local.form_dict
+        if not contact_id and hasattr(frappe.local, 'form_dict') and frappe.local.form_dict:
+            contact_id = frappe.local.form_dict.get('contact_id')
+        
+        # Method 3: request.args (for GET query parameters)
+        if not contact_id and hasattr(frappe, 'request') and frappe.request:
+            if hasattr(frappe.request, 'args'):
+                contact_id = frappe.request.args.get('contact_id')
+        
+        # Method 4: Try get_request_data
+        if not contact_id:
+            try:
+                data = get_request_data()
+                if data and isinstance(data, dict):
+                    contact_id = data.get('contact_id')
+            except:
+                pass
+        
+        if not contact_id:
+            # Debug info to help troubleshoot
+            debug_info = {
+                'form_dict': dict(frappe.local.form_dict) if hasattr(frappe.local, 'form_dict') and frappe.local.form_dict else None,
+                'request_args': dict(frappe.request.args) if hasattr(frappe, 'request') and hasattr(frappe.request, 'args') else None
+            }
+            return {
+                'success': False, 
+                'message': 'contact_id is required',
+                'debug': debug_info
+            }
+
+        if not frappe.db.exists('Contact Us', contact_id):
+            return {'success': False, 'message': 'Contact submission not found'}
+        
+        contact = frappe.get_doc('Contact Us', contact_id)
+        print(contact_id)
+        if contact.status == 'New':
+            contact.status = 'Read'
+            contact.flags.ignore_version = True
+            contact.save(ignore_permissions=True)
+            frappe.db.commit()
+        
+        return {'success': True, 'data': contact.as_dict()}
+        
+    except Exception as e:
+        import traceback
+        frappe.log_error(f"Get Contact Submission Error: {str(e)}\n{traceback.format_exc()}")
+        return {'success': False, 'error': str(e)}
+
+
+
+@frappe.whitelist()
+def respond_to_contact():
+    """Admin only - Respond to a contact submission and send email to user"""
+    try:
+        ensure_session_data()
+        
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: Admin permission required'
+            }
+        
+        data = get_request_data()
+        contact_id = data.get('contact_id')
+        admin_response = data.get('admin_response')
+        
+        if not contact_id:
+            return {'success': False, 'message': 'contact_id is required'}
+        
+        if not admin_response:
+            return {'success': False, 'message': 'admin_response is required'}
+        
+        if not frappe.db.exists('Contact Us', contact_id):
+            return {'success': False, 'message': 'Contact submission not found'}
+        
+        contact = frappe.get_doc('Contact Us', contact_id)
+        contact.admin_response = admin_response
+        contact.status = 'Responded'
+        contact.responded_at = frappe.utils.now()
+        
+        contact.flags.ignore_version = True
+        contact.save(ignore_permissions=True)
+        frappe.db.commit()
+        
+        # Send email to the user
+        try:
+            send_response_email(
+                recipient_email=contact.email,
+                recipient_name=contact.name_of_sender,
+                original_message=contact.message,
+                admin_response=admin_response
+            )
+            email_sent = True
+            email_message = 'Response saved and email sent successfully'
+        except Exception as email_error:
+            email_sent = False
+            email_message = f'Response saved but email failed: {str(email_error)}'
+            frappe.log_error(f"Email Send Error: {str(email_error)}", "Contact Response Email")
+        
+        return {
+            'success': True, 
+            'message': email_message,
+            'email_sent': email_sent,
+            'data': contact.as_dict()
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Respond to Contact Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+def send_response_email(recipient_email, recipient_name, original_message, admin_response):
+    """Send email response to user who submitted contact form"""
+    
+    # Email subject
+    subject = "Re: Your Message to LocalMoves - We've Responded!"
+    
+    # Email body with HTML formatting
+    message = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9;">
+        <div style="background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            
+            <!-- Header -->
+            <div style="text-align: center; margin-bottom: 30px;">
+                <h1 style="color: #2563eb; margin: 0; font-size: 28px;">LocalMoves</h1>
+                <p style="color: #6b7280; margin-top: 5px;">Logistics Management System</p>
+            </div>
+            
+            <!-- Greeting -->
+            <p style="font-size: 16px; color: #374151; margin-bottom: 20px;">
+                Dear {recipient_name},
+            </p>
+            
+            <p style="font-size: 16px; color: #374151; margin-bottom: 25px;">
+                Thank you for contacting us! We have reviewed your message and here is our response:
+            </p>
+            
+            <!-- Original Message -->
+            <div style="background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin-bottom: 25px; border-left: 4px solid #9ca3af;">
+                <p style="font-weight: bold; color: #4b5563; margin-bottom: 10px; font-size: 14px;">
+                    YOUR MESSAGE:
+                </p>
+                <p style="color: #6b7280; font-size: 14px; line-height: 1.6; margin: 0; font-style: italic;">
+                    "{original_message}"
+                </p>
+            </div>
+            
+            <!-- Admin Response -->
+            <div style="background-color: #eff6ff; padding: 20px; border-radius: 8px; margin-bottom: 25px; border-left: 4px solid #2563eb;">
+                <p style="font-weight: bold; color: #1e40af; margin-bottom: 10px; font-size: 14px;">
+                    OUR RESPONSE:
+                </p>
+                <p style="color: #1e3a8a; font-size: 15px; line-height: 1.6; margin: 0;">
+                    {admin_response}
+                </p>
+            </div>
+            
+            <!-- Call to Action -->
+            <p style="font-size: 16px; color: #374151; margin-bottom: 20px;">
+                If you have any further questions, please don't hesitate to reach out to us again.
+            </p>
+            
+            <!-- Footer -->
+            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; text-align: center;">
+                <p style="font-size: 14px; color: #6b7280; margin-bottom: 10px;">
+                    Best regards,<br>
+                    <strong style="color: #2563eb;">LocalMoves Support Team</strong>
+                </p>
+                <p style="font-size: 12px; color: #9ca3af; margin-top: 15px;">
+                    This is an automated response to your contact form submission.<br>
+                    Please do not reply directly to this email.
+                </p>
+            </div>
+        </div>
+        
+        <!-- Bottom Note -->
+        <p style="text-align: center; font-size: 12px; color: #9ca3af; margin-top: 20px;">
+            © 2024 LocalMoves. All rights reserved.
+        </p>
+    </div>
+    """
+    
+    # Send the email
+    frappe.sendmail(
+        recipients=[recipient_email],
+        subject=subject,
+        message=message,
+        now=True,  # Send immediately
+        retry=3    # Retry 3 times if it fails
+    )
+    
+    frappe.logger().info(f"Response email sent to {recipient_email}")
+
+@frappe.whitelist()
+def update_contact_status():
+    """Admin only - Update contact submission status"""
+    try:
+        ensure_session_data()
+        
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: Admin permission required'
+            }
+        
+        data = get_request_data()
+        contact_id = data.get('contact_id')
+        status = data.get('status')
+        
+        if not contact_id:
+            return {'success': False, 'message': 'contact_id is required'}
+        
+        if not status:
+            return {'success': False, 'message': 'status is required'}
+        
+        valid_statuses = ['New', 'Read', 'Responded', 'Closed']
+        if status not in valid_statuses:
+            return {
+                'success': False, 
+                'message': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'
+            }
+        
+        if not frappe.db.exists('Contact Us', contact_id):
+            return {'success': False, 'message': 'Contact submission not found'}
+        
+        contact = frappe.get_doc('Contact Us', contact_id)
+        contact.status = status
+        
+        contact.flags.ignore_version = True
+        contact.save(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True, 
+            'message': 'Status updated successfully',
+            'data': contact.as_dict()
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Update Contact Status Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist()
+def delete_contact_submission():
+    """Admin only - Delete a contact submission"""
+    try:
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: Admin permission required'
+            }
+        
+        data = get_request_data()
+        contact_id = data.get('contact_id')
+        
+        if not contact_id:
+            return {'success': False, 'message': 'contact_id is required'}
+        
+        if not frappe.db.exists('Contact Us', contact_id):
+            return {'success': False, 'message': 'Contact submission not found'}
+        
+        frappe.delete_doc('Contact Us', contact_id, ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {'success': True, 'message': 'Contact submission deleted successfully'}
+        
+    except Exception as e:
+        frappe.log_error(f"Delete Contact Submission Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
