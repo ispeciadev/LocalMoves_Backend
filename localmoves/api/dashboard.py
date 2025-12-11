@@ -114,37 +114,6 @@ def create_request():
         frappe.db.rollback()
         return {'success': False, 'error': str(e)}
 
-# @frappe.whitelist()
-# def update_request():
-#     """Update request details"""
-#     try:
-#         ensure_session_data()
-        
-#         data = get_request_data()
-#         request_id = data.get('request_id')
-
-#         if not frappe.db.exists('Logistics Request', request_id):
-#             return {'success': False, 'message': 'Request not found'}
-        
-#         request_doc = frappe.get_doc('Logistics Request', request_id)
-        
-#         for field in ['user_name', 'user_phone', 'pickup_address', 'pickup_city', 'pickup_pincode',
-#                       'delivery_address', 'delivery_city', 'delivery_pincode', 'goods_type', 
-#                       'goods_weight', 'vehicle_type', 'estimated_cost', 'actual_cost', 
-#                       'status', 'company_name', 'delivery_date']:
-#             if field in data:
-#                 setattr(request_doc, field, data.get(field))
-        
-#         request_doc.flags.ignore_version = True
-#         request_doc.save(ignore_permissions=True)
-#         frappe.db.commit()
-        
-#         return {'success': True, 'message': 'Request updated successfully', 'data': request_doc.as_dict()}
-#     except Exception as e:
-#         frappe.log_error(f"Update Request Error: {str(e)}")
-#         frappe.db.rollback()
-#         return {'success': False, 'error': str(e)}
-
 @frappe.whitelist()
 def update_request():
     """Update request details"""
@@ -251,27 +220,128 @@ def update_request():
         frappe.db.rollback()
         return {'success': False, 'error': str(e)} 
 
-@frappe.whitelist()
-def delete_request():
-    """Delete a request"""
-    try:
-        data = get_request_data()
-        request_id = data.get('request_id')
-        if not frappe.db.exists('Logistics Request', request_id):
-            return {'success': False, 'message': 'Request not found'}
+# @frappe.whitelist()
+# def delete_request():
+#     """Delete a request"""
+#     try:
+#         data = get_request_data()
+#         request_id = data.get('request_id')
+#         if not frappe.db.exists('Logistics Request', request_id):
+#             return {'success': False, 'message': 'Request not found'}
         
-        frappe.delete_doc('Logistics Request', request_id, ignore_permissions=True)
-        frappe.db.commit()
+#         frappe.delete_doc('Logistics Request', request_id, ignore_permissions=True)
+#         frappe.db.commit()
         
-        return {'success': True, 'message': 'Request deleted successfully'}
-    except Exception as e:
-        frappe.log_error(f"Delete Request Error: {str(e)}")
-        frappe.db.rollback()
-        return {'success': False, 'error': str(e)}
+#         return {'success': True, 'message': 'Request deleted successfully'}
+#     except Exception as e:
+#         frappe.log_error(f"Delete Request Error: {str(e)}")
+#         frappe.db.rollback()
+#         return {'success': False, 'error': str(e)}
 
 # ===== PAYMENT CRUD OPERATIONS =====
 
 @frappe.whitelist()
+def delete_request():
+    """Delete a request and its linked payment transactions"""
+    try:
+        import json
+        
+        request_id = None
+        
+        # Parse raw request data
+        if frappe.request:
+            raw_data = frappe.request.get_data(as_text=True)
+            if raw_data:
+                try:
+                    parsed = json.loads(raw_data)
+                    request_id = parsed.get('request_id')
+                except:
+                    pass
+        
+        # Fallback: Check form_dict
+        if not request_id:
+            request_id = frappe.local.form_dict.get('request_id')
+        
+        if not request_id:
+            return {
+                'success': False, 
+                'message': 'request_id is required'
+            }
+        
+        # Check if request exists
+        if not frappe.db.exists('Logistics Request', request_id):
+            return {
+                'success': False, 
+                'message': f'Request not found: {request_id}'
+            }
+        
+        # Get cascade delete option (default: false)
+        cascade = parsed.get('cascade', False) if 'parsed' in locals() else False
+        
+        # Check for linked Payment Transactions
+        linked_payments = frappe.get_all('Payment Transaction',
+            filters={'request_id': request_id},
+            fields=['name', 'payment_status', 'total_amount']
+        )
+        
+        if linked_payments:
+            if not cascade:
+                # Return error with option to cascade delete
+                return {
+                    'success': False,
+                    'message': f'Cannot delete request {request_id} because it has {len(linked_payments)} linked payment transaction(s)',
+                    'linked_payments': linked_payments,
+                    'suggestion': 'Set "cascade": true in your request to delete linked records, or delete them manually first'
+                }
+            else:
+                # CASCADE DELETE: Delete linked payments first
+                deleted_payments = []
+                for payment in linked_payments:
+                    try:
+                        frappe.delete_doc('Payment Transaction', payment['name'], 
+                                        ignore_permissions=True, force=True)
+                        deleted_payments.append(payment['name'])
+                    except Exception as e:
+                        frappe.log_error(f"Failed to delete payment {payment['name']}: {str(e)}")
+        
+        # Now delete the request
+        frappe.delete_doc('Logistics Request', request_id, 
+                         ignore_permissions=True, force=True)
+        frappe.db.commit()
+        
+        result = {
+            'success': True, 
+            'message': 'Request deleted successfully',
+            'request_id': request_id
+        }
+        
+        if cascade and linked_payments:
+            result['cascade_deleted'] = {
+                'payment_transactions': deleted_payments if 'deleted_payments' in locals() else [],
+                'count': len(deleted_payments) if 'deleted_payments' in locals() else 0
+            }
+        
+        return result
+        
+    except frappe.LinkExistsError as e:
+        # Catch the specific link exists error
+        error_msg = str(e)
+        frappe.db.rollback()
+        return {
+            'success': False,
+            'error': 'Link exists',
+            'message': error_msg,
+            'suggestion': 'Use "cascade": true to delete linked records automatically'
+        }
+        
+    except Exception as e:
+        frappe.log_error(title="Delete Request Error", message=str(e))
+        frappe.db.rollback()
+        return {
+            'success': False, 
+            'error': str(e)
+        }    
+    
 def get_all_payments():
     """Get all payments"""
     try:
@@ -977,9 +1047,63 @@ def get_revenue_chart():
         frappe.log_error(f"Revenue Chart Error: {str(e)}")
         return {'success': False, 'error': str(e)}
 
+
+@frappe.whitelist()
+def get_deposit_payment_chart():
+    """Get 10% deposit payment data for charts"""
+    try:
+        # Last 7 days
+        seven_days = frappe.db.sql("""
+            SELECT DATE(deposit_paid_at) as date, 
+                   SUM(deposit_amount) as revenue,
+                   COUNT(*) as transaction_count
+            FROM `tabPayment Transaction`
+            WHERE deposit_status = 'Paid' 
+            AND deposit_paid_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+            GROUP BY DATE(deposit_paid_at)
+            ORDER BY date ASC
+        """, as_dict=True)
+        
+        # Last 30 days
+        month_data = frappe.db.sql("""
+            SELECT DATE(deposit_paid_at) as date, 
+                   SUM(deposit_amount) as revenue,
+                   COUNT(*) as transaction_count
+            FROM `tabPayment Transaction`
+            WHERE deposit_status = 'Paid'
+            AND deposit_paid_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            GROUP BY DATE(deposit_paid_at)
+            ORDER BY date ASC
+        """, as_dict=True)
+        
+        # Last 12 months
+        year_data = frappe.db.sql("""
+            SELECT DATE_FORMAT(deposit_paid_at, '%Y-%m') as month, 
+                   SUM(deposit_amount) as revenue,
+                   COUNT(*) as transaction_count
+            FROM `tabPayment Transaction`
+            WHERE deposit_status = 'Paid'
+            AND deposit_paid_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+            GROUP BY DATE_FORMAT(deposit_paid_at, '%Y-%m')
+            ORDER BY month ASC
+        """, as_dict=True)
+        
+        return {
+            'success': True,
+            'data': {
+                'seven_days': seven_days,
+                'one_month': month_data,
+                'one_year': year_data
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Deposit Payment Chart Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
 @frappe.whitelist()
 def get_dashboard_stats():
-    """Get comprehensive dashboard statistics for admin INCLUDING PAYMENTS"""
+    """Get comprehensive dashboard statistics for admin INCLUDING PAYMENTS AND DEPOSIT ANALYTICS"""
     try:
         # Total counts
         total_users = frappe.db.count('LocalMoves User', {'is_active': 1})
@@ -1011,20 +1135,136 @@ def get_dashboard_stats():
             WHERE payment_status = 'Pending'
         """, as_dict=True)[0].total or 0
         
-        # Revenue from request payments (Payment Transaction doctype)
-        request_deposit_revenue = frappe.db.sql("""
+        # ===== REQUEST PAYMENT TRANSACTION STATISTICS (10% DEPOSITS) =====
+        
+        # Total Payment Transactions count
+        total_payment_transactions = frappe.db.count('Payment Transaction')
+        
+        # Deposit payments (10% deposits) - PAID ONLY
+        deposit_paid_count = frappe.db.count('Payment Transaction', {
+            'deposit_status': 'Paid'
+        })
+        
+        deposit_paid_revenue = frappe.db.sql("""
             SELECT COALESCE(SUM(deposit_amount), 0) as total
             FROM `tabPayment Transaction`
             WHERE deposit_status = 'Paid'
         """, as_dict=True)[0].total or 0
         
-        request_balance_revenue = frappe.db.sql("""
+        # Deposit payments - UNPAID
+        deposit_unpaid_count = frappe.db.count('Payment Transaction', {
+            'deposit_status': 'Unpaid'
+        })
+        
+        deposit_unpaid_amount = frappe.db.sql("""
+            SELECT COALESCE(SUM(deposit_amount), 0) as total
+            FROM `tabPayment Transaction`
+            WHERE deposit_status = 'Unpaid'
+        """, as_dict=True)[0].total or 0
+        
+        # Balance payments (remaining 90%) - PAID
+        balance_paid_count = frappe.db.count('Payment Transaction', {
+            'balance_status': 'Paid'
+        })
+        
+        balance_paid_revenue = frappe.db.sql("""
             SELECT COALESCE(SUM(remaining_amount), 0) as total
             FROM `tabPayment Transaction`
             WHERE balance_status = 'Paid'
         """, as_dict=True)[0].total or 0
         
-        total_request_payments_revenue = request_deposit_revenue + request_balance_revenue
+        # Balance payments - UNPAID
+        balance_unpaid_count = frappe.db.count('Payment Transaction', {
+            'balance_status': 'Unpaid'
+        })
+        
+        balance_unpaid_amount = frappe.db.sql("""
+            SELECT COALESCE(SUM(remaining_amount), 0) as total
+            FROM `tabPayment Transaction`
+            WHERE balance_status = 'Unpaid'
+        """, as_dict=True)[0].total or 0
+        
+        # Fully paid transactions
+        fully_paid_count = frappe.db.count('Payment Transaction', {
+            'payment_status': 'Fully Paid'
+        })
+        
+        fully_paid_revenue = frappe.db.sql("""
+            SELECT COALESCE(SUM(total_amount), 0) as total
+            FROM `tabPayment Transaction`
+            WHERE payment_status = 'Fully Paid'
+        """, as_dict=True)[0].total or 0
+        
+        # Total request payments revenue (deposits + balance)
+        total_request_payments_revenue = deposit_paid_revenue + balance_paid_revenue
+        
+        # ===== BAR GRAPH DATA FOR DEPOSITS BY DATE (Last 30 Days) =====
+        deposit_trend = frappe.db.sql("""
+            SELECT 
+                DATE(deposit_paid_at) as payment_date,
+                COUNT(*) as transaction_count,
+                SUM(deposit_amount) as daily_revenue
+            FROM `tabPayment Transaction`
+            WHERE deposit_status = 'Paid'
+            AND deposit_paid_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            GROUP BY DATE(deposit_paid_at)
+            ORDER BY payment_date ASC
+        """, as_dict=True)
+        
+        # ===== BAR GRAPH DATA FOR DEPOSITS BY COMPANY =====
+        deposit_by_company = frappe.db.sql("""
+            SELECT 
+                company_name,
+                COUNT(*) as transaction_count,
+                SUM(deposit_amount) as total_deposits,
+                SUM(CASE WHEN deposit_status = 'Paid' THEN deposit_amount ELSE 0 END) as paid_deposits,
+                SUM(CASE WHEN deposit_status = 'Unpaid' THEN deposit_amount ELSE 0 END) as unpaid_deposits
+            FROM `tabPayment Transaction`
+            GROUP BY company_name
+            ORDER BY total_deposits DESC
+            LIMIT 10
+        """, as_dict=True)
+        
+        # ===== BAR GRAPH DATA FOR PAYMENT STATUS BREAKDOWN =====
+        payment_transaction_status = frappe.db.sql("""
+            SELECT 
+                payment_status,
+                COUNT(*) as count,
+                SUM(total_amount) as total_revenue
+            FROM `tabPayment Transaction`
+            GROUP BY payment_status
+        """, as_dict=True)
+        
+        # ===== MONTHLY DEPOSIT TRENDS (Last 6 Months) =====
+        monthly_deposit_trend = frappe.db.sql("""
+            SELECT 
+                DATE_FORMAT(deposit_paid_at, '%Y-%m') as month,
+                COUNT(*) as transaction_count,
+                SUM(deposit_amount) as monthly_revenue
+            FROM `tabPayment Transaction`
+            WHERE deposit_status = 'Paid'
+            AND deposit_paid_at >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+            GROUP BY DATE_FORMAT(deposit_paid_at, '%Y-%m')
+            ORDER BY month ASC
+        """, as_dict=True)
+        
+        # ===== DEPOSIT VS BALANCE PAYMENT COMPARISON =====
+        payment_type_comparison = [
+            {
+                'payment_type': 'Deposits (10%)',
+                'paid_count': deposit_paid_count,
+                'paid_amount': float(deposit_paid_revenue),
+                'unpaid_count': deposit_unpaid_count,
+                'unpaid_amount': float(deposit_unpaid_amount)
+            },
+            {
+                'payment_type': 'Balance (90%)',
+                'paid_count': balance_paid_count,
+                'paid_amount': float(balance_paid_revenue),
+                'unpaid_count': balance_unpaid_count,
+                'unpaid_amount': float(balance_unpaid_amount)
+            }
+        ]
         
         # Combined total revenue
         total_revenue = paid_revenue + total_request_payments_revenue
@@ -1083,10 +1323,25 @@ def get_dashboard_stats():
         
         # Recent request payments
         recent_request_payments = frappe.get_all('Payment Transaction',
-            fields=['name', 'request_id', 'company_name', 'total_amount', 'payment_status', 'created_at'],
+            fields=['name', 'request_id', 'company_name', 'total_amount', 'deposit_amount', 
+                   'remaining_amount', 'payment_status', 'deposit_status', 'balance_status', 'created_at'],
             order_by='created_at desc',
             limit=10
         )
+        
+        # ===== TOP DEPOSIT PAYERS (Users with most deposits paid) =====
+        top_deposit_payers = frappe.db.sql("""
+            SELECT 
+                user_email,
+                COUNT(*) as total_deposits,
+                SUM(deposit_amount) as total_deposit_amount,
+                COUNT(CASE WHEN deposit_status = 'Paid' THEN 1 END) as paid_deposits
+            FROM `tabPayment Transaction`
+            WHERE deposit_status = 'Paid'
+            GROUP BY user_email
+            ORDER BY total_deposit_amount DESC
+            LIMIT 10
+        """, as_dict=True)
         
         return {
             'success': True,
@@ -1096,16 +1351,55 @@ def get_dashboard_stats():
                     'companies': total_companies,
                     'paid_subscribers': paid_subscribers,
                     'requests': total_requests,
-                    'total_payments': total_payments_count
+                    'total_payments': total_payments_count,
+                    'total_payment_transactions': total_payment_transactions
                 },
                 'revenue': {
                     'total': float(total_revenue),
                     'subscription_revenue': float(paid_revenue),
                     'request_payments_revenue': float(total_request_payments_revenue),
+                    'deposit_revenue': float(deposit_paid_revenue),
+                    'balance_revenue': float(balance_paid_revenue),
                     'pending': float(pending_revenue),
                     'paid_count': len([p for p in payment_status_breakdown if p['payment_status'] == 'Paid']),
                     'pending_count': len([p for p in payment_status_breakdown if p['payment_status'] == 'Pending'])
                 },
+                
+                # ===== DEPOSIT ANALYTICS SECTION =====
+                'deposit_analytics': {
+                    'summary': {
+                        'total_transactions': total_payment_transactions,
+                        'deposits_paid': deposit_paid_count,
+                        'deposits_unpaid': deposit_unpaid_count,
+                        'deposits_paid_revenue': float(deposit_paid_revenue),
+                        'deposits_unpaid_amount': float(deposit_unpaid_amount),
+                        'balance_paid': balance_paid_count,
+                        'balance_unpaid': balance_unpaid_count,
+                        'balance_paid_revenue': float(balance_paid_revenue),
+                        'balance_unpaid_amount': float(balance_unpaid_amount),
+                        'fully_paid_transactions': fully_paid_count,
+                        'fully_paid_revenue': float(fully_paid_revenue)
+                    },
+                    
+                    # Bar graph data - Daily deposits (last 30 days)
+                    'daily_deposit_trend': deposit_trend,
+                    
+                    # Bar graph data - Monthly deposits (last 6 months)
+                    'monthly_deposit_trend': monthly_deposit_trend,
+                    
+                    # Bar graph data - Deposits by company
+                    'deposit_by_company': deposit_by_company,
+                    
+                    # Bar graph data - Payment status breakdown
+                    'payment_status_distribution': payment_transaction_status,
+                    
+                    # Bar graph data - Deposit vs Balance comparison
+                    'deposit_vs_balance': payment_type_comparison,
+                    
+                    # Top deposit payers
+                    'top_payers': top_deposit_payers
+                },
+                
                 'payment_breakdown': {
                     'by_status': payment_status_breakdown,
                     'by_subscription': subscription_revenue_breakdown
@@ -1123,6 +1417,153 @@ def get_dashboard_stats():
     except Exception as e:
         frappe.log_error(f"Dashboard Stats Error: {str(e)}")
         return {'success': False, 'error': str(e)}
+    
+# @frappe.whitelist()
+# def get_dashboard_stats():
+#     """Get comprehensive dashboard statistics for admin INCLUDING PAYMENTS"""
+#     try:
+#         # Total counts
+#         total_users = frappe.db.count('LocalMoves User', {'is_active': 1})
+#         total_companies = frappe.db.count('Logistics Company')
+        
+#         # PAID SUBSCRIBERS ONLY (companies with paid plans)
+#         paid_subscribers = frappe.db.count('Logistics Company', {
+#             'subscription_plan': ['in', ['Basic', 'Standard', 'Premium']]
+#         })
+        
+#         total_requests = frappe.db.count('Logistics Request')
+        
+#         # ===== PAYMENT STATISTICS =====
+        
+#         # Total payments and revenue
+#         total_payments_count = frappe.db.count('Payment')
+        
+#         # Revenue from PAID payments only
+#         paid_revenue = frappe.db.sql("""
+#             SELECT COALESCE(SUM(amount), 0) as total
+#             FROM `tabPayment`
+#             WHERE payment_status = 'Paid'
+#         """, as_dict=True)[0].total or 0
+        
+#         # Pending revenue
+#         pending_revenue = frappe.db.sql("""
+#             SELECT COALESCE(SUM(amount), 0) as total
+#             FROM `tabPayment`
+#             WHERE payment_status = 'Pending'
+#         """, as_dict=True)[0].total or 0
+        
+#         # Revenue from request payments (Payment Transaction doctype)
+#         request_deposit_revenue = frappe.db.sql("""
+#             SELECT COALESCE(SUM(deposit_amount), 0) as total
+#             FROM `tabPayment Transaction`
+#             WHERE deposit_status = 'Paid'
+#         """, as_dict=True)[0].total or 0
+        
+#         request_balance_revenue = frappe.db.sql("""
+#             SELECT COALESCE(SUM(remaining_amount), 0) as total
+#             FROM `tabPayment Transaction`
+#             WHERE balance_status = 'Paid'
+#         """, as_dict=True)[0].total or 0
+        
+#         total_request_payments_revenue = request_deposit_revenue + request_balance_revenue
+        
+#         # Combined total revenue
+#         total_revenue = paid_revenue + total_request_payments_revenue
+        
+#         # Payment status breakdown
+#         payment_status_breakdown = frappe.db.sql("""
+#             SELECT payment_status, COUNT(*) as count
+#             FROM `tabPayment`
+#             GROUP BY payment_status
+#         """, as_dict=True)
+        
+#         # Subscription plan revenue breakdown (PAID ONLY)
+#         subscription_revenue_breakdown = frappe.db.sql("""
+#             SELECT subscription_plan, 
+#                    SUM(amount) as revenue,
+#                    COUNT(*) as count
+#             FROM `tabPayment`
+#             WHERE payment_status = 'Paid'
+#             AND subscription_plan IN ('Basic', 'Standard', 'Premium')
+#             GROUP BY subscription_plan
+#         """, as_dict=True)
+        
+#         # Active subscriptions by plan (PAID ONLY)
+#         subscription_breakdown = frappe.db.sql("""
+#             SELECT subscription_plan, COUNT(*) as count
+#             FROM `tabLogistics Company`
+#             WHERE is_active = 1
+#             AND subscription_plan IN ('Basic', 'Standard', 'Premium')
+#             GROUP BY subscription_plan
+#         """, as_dict=True)
+        
+#         # Recent activity
+#         recent_users = frappe.get_all('LocalMoves User',
+#             fields=['name', 'full_name', 'email', 'role', 'creation'],
+#             order_by='creation desc',
+#             limit=10
+#         )
+        
+#         recent_companies = frappe.get_all('Logistics Company',
+#             fields=['name', 'company_name', 'manager_email', 'subscription_plan', 'created_at'],
+#             order_by='created_at desc',
+#             limit=10
+#         )
+        
+#         recent_payments = frappe.get_all('Payment',
+#             fields=['name', 'company_name', 'amount', 'payment_status', 'subscription_plan', 'created_at', 'paid_date'],
+#             order_by='created_at desc',
+#             limit=10
+#         )
+        
+#         recent_requests = frappe.get_all('Logistics Request',
+#             fields=['name', 'user_email', 'pickup_city', 'delivery_city', 'status', 'created_at'],
+#             order_by='created_at desc',
+#             limit=10
+#         )
+        
+#         # Recent request payments
+#         recent_request_payments = frappe.get_all('Payment Transaction',
+#             fields=['name', 'request_id', 'company_name', 'total_amount', 'payment_status', 'created_at'],
+#             order_by='created_at desc',
+#             limit=10
+#         )
+        
+#         return {
+#             'success': True,
+#             'data': {
+#                 'totals': {
+#                     'users': total_users,
+#                     'companies': total_companies,
+#                     'paid_subscribers': paid_subscribers,
+#                     'requests': total_requests,
+#                     'total_payments': total_payments_count
+#                 },
+#                 'revenue': {
+#                     'total': float(total_revenue),
+#                     'subscription_revenue': float(paid_revenue),
+#                     'request_payments_revenue': float(total_request_payments_revenue),
+#                     'pending': float(pending_revenue),
+#                     'paid_count': len([p for p in payment_status_breakdown if p['payment_status'] == 'Paid']),
+#                     'pending_count': len([p for p in payment_status_breakdown if p['payment_status'] == 'Pending'])
+#                 },
+#                 'payment_breakdown': {
+#                     'by_status': payment_status_breakdown,
+#                     'by_subscription': subscription_revenue_breakdown
+#                 },
+#                 'subscriptions': subscription_breakdown,
+#                 'recent': {
+#                     'users': recent_users,
+#                     'companies': recent_companies,
+#                     'payments': recent_payments,
+#                     'requests': recent_requests,
+#                     'request_payments': recent_request_payments
+#                 }
+#             }
+#         }
+#     except Exception as e:
+#         frappe.log_error(f"Dashboard Stats Error: {str(e)}")
+#         return {'success': False, 'error': str(e)}
 
 
 # ===== PAYMENT CHARTS =====
@@ -1486,118 +1927,556 @@ def get_revenue_chart():
 
 # ===== COMPANY CRUD OPERATIONS =====
 
-@frappe.whitelist()
+# ===== ADMIN COMPANY CRUD OPERATIONS =====
+# Add these functions to your dashboard.py file
+# Replace the existing get_all_companies, get_company, create_company, update_company, delete_company
+
+import json
+
+def process_json_array(data, field_name):
+    """Process JSON array field - returns JSON string for storage"""
+    if not data:
+        return "[]"
+    if isinstance(data, str):
+        try:
+            parsed = json.loads(data)
+            if isinstance(parsed, list):
+                return data
+        except:
+            pass
+        return "[]"
+    if isinstance(data, list):
+        return json.dumps(data)
+    return "[]"
+
+def parse_company_json_fields(company):
+    """Parse all JSON fields in company dict"""
+    if not company or not isinstance(company, dict):
+        return company
+    
+    json_fields = [
+        "areas_covered", "company_gallery", "includes", "material", 
+        "protection", "furniture", "appliances",
+        "swb_van_images", "mwb_van_images", "lwb_van_images", "xlwb_van_images",
+        "mwb_luton_van_images", "lwb_luton_van_images", "tonne_7_5_lorry_images",
+        "tonne_12_lorry_images", "tonne_18_lorry_images"
+    ]
+    
+    for field in json_fields:
+        if field in company and company[field]:
+            try:
+                if isinstance(company[field], str):
+                    company[field] = json.loads(company[field])
+            except:
+                company[field] = []
+        else:
+            company[field] = []
+    
+    return company
+
+
+@frappe.whitelist(allow_guest=False)
 def get_all_companies():
-    """Get all companies"""
+    """Get all companies with complete information including ratings - Admin only"""
     try:
+        # Admin permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: Admin permission required'
+            }
+        
+        # Get all companies with ALL fields
         companies = frappe.get_all('Logistics Company',
-            fields=['*'],
+            fields=[
+                # Basic Details
+                'name', 'company_name', 'manager_email', 'phone', 'personal_contact_name',
+                'pincode', 'location', 'address', 'description', 'services_offered',
+                
+                # Service Areas & Gallery
+                'areas_covered', 'company_gallery',
+                
+                # Includes
+                'includes', 'material', 'protection', 'furniture', 'appliances',
+                
+                # Fleet Quantities
+                'swb_van_quantity', 'mwb_van_quantity', 'lwb_van_quantity', 'xlwb_van_quantity',
+                'mwb_luton_van_quantity', 'lwb_luton_van_quantity', 
+                'tonne_7_5_lorry_quantity', 'tonne_12_lorry_quantity', 'tonne_18_lorry_quantity',
+                
+                # Fleet Images
+                'swb_van_images', 'mwb_van_images', 'lwb_van_images', 'xlwb_van_images',
+                'mwb_luton_van_images', 'lwb_luton_van_images',
+                'tonne_7_5_lorry_images', 'tonne_12_lorry_images', 'tonne_18_lorry_images',
+                
+                # Fleet Summary
+                'total_carrying_capacity',
+                
+                # Pricing
+                'loading_cost_per_m3', 'packing_cost_per_box', 
+                'assembly_cost_per_item', 'disassembly_cost_per_item',
+                'cost_per_mile_under_25', 'cost_per_mile_over_25',
+                
+                # Subscription
+                'subscription_plan', 'subscription_start_date', 'subscription_end_date',
+                'requests_viewed_this_month', 'is_active',
+                
+                # Ratings & Reviews
+                'average_rating', 'total_ratings',
+                
+                # Timestamps
+                'created_at', 'updated_at'
+            ],
             order_by='created_at desc'
         )
-        return {'success': True, 'data': companies, 'count': len(companies)}
+        
+        # Parse JSON fields and get reviews for each company
+        for company in companies:
+            parse_company_json_fields(company)
+            
+            # Get recent reviews for this company
+            recent_reviews = frappe.db.sql("""
+                SELECT 
+                    name as request_id,
+                    full_name as user_name,
+                    rating,
+                    review_comment,
+                    rated_at
+                FROM `tabLogistics Request`
+                WHERE company_name = %(company_name)s
+                AND rating IS NOT NULL
+                AND rating > 0
+                ORDER BY rated_at DESC
+                LIMIT 5
+            """, {"company_name": company['company_name']}, as_dict=True)
+            
+            company['recent_reviews'] = recent_reviews
+        
+        return {
+            'success': True, 
+            'data': companies, 
+            'count': len(companies)
+        }
+        
     except Exception as e:
-        frappe.log_error(f"Get Companies Error: {str(e)}")
+        frappe.log_error(f"Get All Companies Error: {str(e)}")
         return {'success': False, 'error': str(e)}
 
-@frappe.whitelist()
+@frappe.whitelist(allow_guest=False)
 def get_company():
-    """Get a single company by ID"""
+    """Get a single company by ID with complete information - Admin only"""
     try:
-        company_id = frappe.local.form_dict.get('company_id')
+        # Admin permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: Admin permission required'
+            }
+        
+        # ✅ FIX: Use get_request_data() instead of form_dict
+        data = get_request_data()
+        company_id = data.get('company_id')
+        
         if not company_id:
-            return {'success': False, 'message': 'Company ID is required'}
+            return {
+                'success': False, 
+                'message': 'Company ID is required',
+                'debug': {
+                    'received_data': data,
+                    'data_type': type(data).__name__
+                }
+            }
 
         if not frappe.db.exists('Logistics Company', company_id):
             return {'success': False, 'message': 'Company not found'}
         
+        # Get company document with all fields
         company = frappe.get_doc('Logistics Company', company_id)
-        return {'success': True, 'data': company.as_dict()}
+        company_dict = company.as_dict()
+        
+        # Parse JSON fields
+        parse_company_json_fields(company_dict)
+        
+        # Get ALL reviews for this company
+        all_reviews = frappe.db.sql("""
+            SELECT 
+                name as request_id,
+                user_email,
+                full_name as user_name,
+                rating,
+                review_comment,
+                service_aspects,
+                rated_at,
+                pickup_city,
+                delivery_city,
+                status
+            FROM `tabLogistics Request`
+            WHERE company_name = %(company_name)s
+            AND rating IS NOT NULL
+            AND rating > 0
+            ORDER BY rated_at DESC
+        """, {"company_name": company_dict['company_name']}, as_dict=True)
+        
+        # Parse service_aspects JSON
+        for review in all_reviews:
+            review['rated_at'] = str(review['rated_at'])
+            if review.get('service_aspects'):
+                try:
+                    review['service_aspects'] = json.loads(review['service_aspects'])
+                except:
+                    review['service_aspects'] = {}
+        
+        company_dict['all_reviews'] = all_reviews
+        
+        # Get rating statistics
+        rating_stats = frappe.db.sql("""
+            SELECT 
+                COUNT(*) as total_ratings,
+                AVG(rating) as avg_rating,
+                SUM(CASE WHEN rating = 5 THEN 1 ELSE 0 END) as five_star,
+                SUM(CASE WHEN rating = 4 THEN 1 ELSE 0 END) as four_star,
+                SUM(CASE WHEN rating = 3 THEN 1 ELSE 0 END) as three_star,
+                SUM(CASE WHEN rating = 2 THEN 1 ELSE 0 END) as two_star,
+                SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END) as one_star
+            FROM `tabLogistics Request`
+            WHERE company_name = %(company_name)s
+            AND rating IS NOT NULL
+            AND rating > 0
+        """, {"company_name": company_dict['company_name']}, as_dict=True)
+        
+        company_dict['rating_statistics'] = rating_stats[0] if rating_stats else {}
+        
+        # Get request statistics
+        request_stats = frappe.db.sql("""
+            SELECT 
+                COUNT(*) as total_requests,
+                SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) as completed_requests,
+                SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) as pending_requests,
+                SUM(CASE WHEN status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled_requests
+            FROM `tabLogistics Request`
+            WHERE company_name = %(company_name)s
+        """, {"company_name": company_dict['company_name']}, as_dict=True)
+        
+        company_dict['request_statistics'] = request_stats[0] if request_stats else {}
+        
+        return {'success': True, 'data': company_dict}
+        
     except Exception as e:
         frappe.log_error(f"Get Company Error: {str(e)}")
         return {'success': False, 'error': str(e)}
 
-@frappe.whitelist()
+
+@frappe.whitelist(allow_guest=False)
 def create_company():
-    """Create a new company"""
+    """Create a new company with ALL fields - Admin only"""
     try:
         ensure_session_data()
         
+        # Admin permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: Admin permission required'
+            }
+        
         data = get_request_data()
         
+        # Check if company already exists
         if frappe.db.exists('Logistics Company', {'company_name': data.get('company_name')}):
             return {'success': False, 'message': 'Company with this name already exists'}
         
+        # Validate required fields
+        required_fields = ['company_name', 'manager_email', 'phone', 'pincode', 'location', 'address']
+        for field in required_fields:
+            if not data.get(field):
+                return {'success': False, 'message': f'{field} is required'}
+        
+        # Create company document
         company_doc = frappe.new_doc('Logistics Company')
+        
+        # Basic Details
         company_doc.company_name = data.get('company_name')
         company_doc.manager_email = data.get('manager_email')
-        company_doc.manager_name = data.get('manager_name')
         company_doc.phone = data.get('phone')
-        company_doc.address = data.get('address')
+        company_doc.personal_contact_name = data.get('personal_contact_name', '')
         company_doc.pincode = data.get('pincode')
         company_doc.location = data.get('location')
-        company_doc.description = data.get('description')
-        company_doc.services_offered = data.get('services_offered')
-        company_doc.subscription_plan = data.get('subscription_plan', 'Free')
-        company_doc.is_active = 1
+        company_doc.address = data.get('address')
+        company_doc.description = data.get('description', '')
+        company_doc.services_offered = data.get('services_offered', '')
         
+        # Service Areas & Gallery (JSON)
+        company_doc.areas_covered = process_json_array(data.get('areas_covered'), 'areas_covered')
+        company_doc.company_gallery = process_json_array(data.get('company_gallery'), 'company_gallery')
+        
+        # Includes (JSON)
+        company_doc.includes = process_json_array(data.get('includes'), 'includes')
+        company_doc.material = process_json_array(data.get('material'), 'material')
+        company_doc.protection = process_json_array(data.get('protection'), 'protection')
+        company_doc.furniture = process_json_array(data.get('furniture'), 'furniture')
+        company_doc.appliances = process_json_array(data.get('appliances'), 'appliances')
+        
+        # Fleet Quantities
+        company_doc.swb_van_quantity = int(data.get('swb_van_quantity', 0) or 0)
+        company_doc.mwb_van_quantity = int(data.get('mwb_van_quantity', 0) or 0)
+        company_doc.lwb_van_quantity = int(data.get('lwb_van_quantity', 0) or 0)
+        company_doc.xlwb_van_quantity = int(data.get('xlwb_van_quantity', 0) or 0)
+        company_doc.mwb_luton_van_quantity = int(data.get('mwb_luton_van_quantity', 0) or 0)
+        company_doc.lwb_luton_van_quantity = int(data.get('lwb_luton_van_quantity', 0) or 0)
+        company_doc.tonne_7_5_lorry_quantity = int(data.get('tonne_7_5_lorry_quantity', 0) or 0)
+        company_doc.tonne_12_lorry_quantity = int(data.get('tonne_12_lorry_quantity', 0) or 0)
+        company_doc.tonne_18_lorry_quantity = int(data.get('tonne_18_lorry_quantity', 0) or 0)
+        
+        # Fleet Images (JSON)
+        company_doc.swb_van_images = process_json_array(data.get('swb_van_images'), 'swb_van_images')
+        company_doc.mwb_van_images = process_json_array(data.get('mwb_van_images'), 'mwb_van_images')
+        company_doc.lwb_van_images = process_json_array(data.get('lwb_van_images'), 'lwb_van_images')
+        company_doc.xlwb_van_images = process_json_array(data.get('xlwb_van_images'), 'xlwb_van_images')
+        company_doc.mwb_luton_van_images = process_json_array(data.get('mwb_luton_van_images'), 'mwb_luton_van_images')
+        company_doc.lwb_luton_van_images = process_json_array(data.get('lwb_luton_van_images'), 'lwb_luton_van_images')
+        company_doc.tonne_7_5_lorry_images = process_json_array(data.get('tonne_7_5_lorry_images'), 'tonne_7_5_lorry_images')
+        company_doc.tonne_12_lorry_images = process_json_array(data.get('tonne_12_lorry_images'), 'tonne_12_lorry_images')
+        company_doc.tonne_18_lorry_images = process_json_array(data.get('tonne_18_lorry_images'), 'tonne_18_lorry_images')
+        
+        # Calculate total carrying capacity
+        capacities = {
+            'swb_van_quantity': 5, 'mwb_van_quantity': 8, 'lwb_van_quantity': 11,
+            'xlwb_van_quantity': 13, 'mwb_luton_van_quantity': 17, 'lwb_luton_van_quantity': 19,
+            'tonne_7_5_lorry_quantity': 30, 'tonne_12_lorry_quantity': 45, 'tonne_18_lorry_quantity': 55
+        }
+        total_capacity = sum(int(data.get(field, 0) or 0) * capacity 
+                           for field, capacity in capacities.items())
+        company_doc.total_carrying_capacity = total_capacity
+        
+        # Pricing
+        company_doc.loading_cost_per_m3 = float(data.get('loading_cost_per_m3', 0) or 0)
+        company_doc.packing_cost_per_box = float(data.get('packing_cost_per_box', 0) or 0)
+        company_doc.assembly_cost_per_item = float(data.get('assembly_cost_per_item', 0) or 0)
+        
+        # Auto-calculate disassembly (50% of assembly if not provided)
+        disassembly = float(data.get('disassembly_cost_per_item', 0) or 0)
+        if not disassembly and company_doc.assembly_cost_per_item:
+            disassembly = company_doc.assembly_cost_per_item * 0.5
+        company_doc.disassembly_cost_per_item = disassembly
+        
+        company_doc.cost_per_mile_under_25 = float(data.get('cost_per_mile_under_25', 0) or 0)
+        company_doc.cost_per_mile_over_25 = float(data.get('cost_per_mile_over_25', 0) or 0)
+        
+        # Subscription
+        company_doc.subscription_plan = data.get('subscription_plan', 'Free')
+        company_doc.subscription_start_date = data.get('subscription_start_date')
+        company_doc.subscription_end_date = data.get('subscription_end_date')
+        company_doc.requests_viewed_this_month = 0
+        company_doc.is_active = int(data.get('is_active', 1))
+        
+        # Ratings (initialized to 0)
+        company_doc.average_rating = 0
+        company_doc.total_ratings = 0
+        
+        # Timestamps
+        company_doc.created_at = datetime.now()
+        company_doc.updated_at = datetime.now()
+        
+        # Insert
         company_doc.flags.ignore_version = True
         company_doc.insert(ignore_permissions=True)
         frappe.db.commit()
         
-        return {'success': True, 'message': 'Company created successfully', 'data': company_doc.as_dict()}
+        # Parse response
+        result = company_doc.as_dict()
+        parse_company_json_fields(result)
+        
+        return {
+            'success': True, 
+            'message': 'Company created successfully', 
+            'data': result
+        }
+        
     except Exception as e:
         frappe.log_error(f"Create Company Error: {str(e)}")
         frappe.db.rollback()
         return {'success': False, 'error': str(e)}
 
-@frappe.whitelist()
+
+@frappe.whitelist(allow_guest=False)
 def update_company():
-    """Update company details"""
+    """Update company with ALL fields - Admin only"""
     try:
         ensure_session_data()
         
+        # Admin permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: Admin permission required'
+            }
+        
         data = get_request_data()
         company_name = data.get('company_name')
+        
+        if not company_name:
+            return {'success': False, 'message': 'company_name is required'}
         
         if not frappe.db.exists('Logistics Company', company_name):
             return {'success': False, 'message': 'Company not found'}
         
         company_doc = frappe.get_doc('Logistics Company', company_name)
         
-        for field in ['phone', 'address', 'pincode', 'location', 'description', 
-                      'services_offered', 'subscription_plan', 'is_active']:
-            if field in data:
-                setattr(company_doc, field, data.get(field))
+        # Basic Details
+        if 'phone' in data:
+            company_doc.phone = data['phone']
+        if 'personal_contact_name' in data:
+            company_doc.personal_contact_name = data['personal_contact_name']
+        if 'pincode' in data:
+            company_doc.pincode = data['pincode']
+        if 'location' in data:
+            company_doc.location = data['location']
+        if 'address' in data:
+            company_doc.address = data['address']
+        if 'description' in data:
+            company_doc.description = data['description']
+        if 'services_offered' in data:
+            company_doc.services_offered = data['services_offered']
         
+        # Service Areas & Gallery
+        if 'areas_covered' in data:
+            company_doc.areas_covered = process_json_array(data['areas_covered'], 'areas_covered')
+        if 'company_gallery' in data:
+            company_doc.company_gallery = process_json_array(data['company_gallery'], 'company_gallery')
+        
+        # Includes
+        if 'includes' in data:
+            company_doc.includes = process_json_array(data['includes'], 'includes')
+        if 'material' in data:
+            company_doc.material = process_json_array(data['material'], 'material')
+        if 'protection' in data:
+            company_doc.protection = process_json_array(data['protection'], 'protection')
+        if 'furniture' in data:
+            company_doc.furniture = process_json_array(data['furniture'], 'furniture')
+        if 'appliances' in data:
+            company_doc.appliances = process_json_array(data['appliances'], 'appliances')
+        
+        # Fleet Quantities
+        fleet_fields = [
+            'swb_van_quantity', 'mwb_van_quantity', 'lwb_van_quantity', 'xlwb_van_quantity',
+            'mwb_luton_van_quantity', 'lwb_luton_van_quantity',
+            'tonne_7_5_lorry_quantity', 'tonne_12_lorry_quantity', 'tonne_18_lorry_quantity'
+        ]
+        for field in fleet_fields:
+            if field in data:
+                setattr(company_doc, field, int(data[field] or 0))
+        
+        # Fleet Images
+        image_fields = [
+            'swb_van_images', 'mwb_van_images', 'lwb_van_images', 'xlwb_van_images',
+            'mwb_luton_van_images', 'lwb_luton_van_images',
+            'tonne_7_5_lorry_images', 'tonne_12_lorry_images', 'tonne_18_lorry_images'
+        ]
+        for field in image_fields:
+            if field in data:
+                setattr(company_doc, field, process_json_array(data[field], field))
+        
+        # Recalculate capacity if fleet changed
+        if any(field in data for field in fleet_fields):
+            capacities = {
+                'swb_van_quantity': 5, 'mwb_van_quantity': 8, 'lwb_van_quantity': 11,
+                'xlwb_van_quantity': 13, 'mwb_luton_van_quantity': 17, 'lwb_luton_van_quantity': 19,
+                'tonne_7_5_lorry_quantity': 30, 'tonne_12_lorry_quantity': 45, 'tonne_18_lorry_quantity': 55
+            }
+            total_capacity = sum(int(getattr(company_doc, field, 0) or 0) * capacity 
+                               for field, capacity in capacities.items())
+            company_doc.total_carrying_capacity = total_capacity
+        
+        # Pricing
+        pricing_fields = [
+            'loading_cost_per_m3', 'packing_cost_per_box', 'assembly_cost_per_item',
+            'disassembly_cost_per_item', 'cost_per_mile_under_25', 'cost_per_mile_over_25'
+        ]
+        for field in pricing_fields:
+            if field in data:
+                setattr(company_doc, field, float(data[field] or 0))
+        
+        # Auto-calculate disassembly if assembly changed
+        if 'assembly_cost_per_item' in data:
+            if 'disassembly_cost_per_item' not in data:
+                company_doc.disassembly_cost_per_item = float(data['assembly_cost_per_item'] or 0) * 0.5
+        
+        # Subscription
+        if 'subscription_plan' in data:
+            company_doc.subscription_plan = data['subscription_plan']
+        if 'subscription_start_date' in data:
+            company_doc.subscription_start_date = data['subscription_start_date']
+        if 'subscription_end_date' in data:
+            company_doc.subscription_end_date = data['subscription_end_date']
+        if 'is_active' in data:
+            company_doc.is_active = int(data['is_active'])
+        
+        # Update timestamp
+        company_doc.updated_at = datetime.now()
+        
+        # Save
         company_doc.flags.ignore_version = True
         company_doc.save(ignore_permissions=True)
         frappe.db.commit()
         
-        return {'success': True, 'message': 'Company updated successfully', 'data': company_doc.as_dict()}
+        # Parse response
+        result = company_doc.as_dict()
+        parse_company_json_fields(result)
+        
+        return {
+            'success': True, 
+            'message': 'Company updated successfully', 
+            'data': result
+        }
+        
     except Exception as e:
         frappe.log_error(f"Update Company Error: {str(e)}")
         frappe.db.rollback()
         return {'success': False, 'error': str(e)}
 
-@frappe.whitelist()
+
+@frappe.whitelist(allow_guest=False)
 def delete_company():
-    """Delete a company"""
+    """Delete a company - Admin only with impact analysis"""
     try:
+        # Admin permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: Admin permission required'
+            }
+        
         data = get_request_data()
         company_name = data.get('company_name')
+        
+        if not company_name:
+            return {'success': False, 'message': 'company_name is required'}
         
         if not frappe.db.exists('Logistics Company', company_name):
             return {'success': False, 'message': 'Company not found'}
         
+        # Check impact before deletion
+        request_count = frappe.db.count('Logistics Request', {'company_name': company_name})
+        payment_count = frappe.db.count('Payment Transaction', {'company_name': company_name})
+        
+        # Delete company
         frappe.delete_doc('Logistics Company', company_name, ignore_permissions=True)
         frappe.db.commit()
         
-        return {'success': True, 'message': 'Company deleted successfully'}
+        return {
+            'success': True, 
+            'message': 'Company deleted successfully',
+            'deletion_impact': {
+                'requests_affected': request_count,
+                'payments_affected': payment_count
+            }
+        }
+        
     except Exception as e:
         frappe.log_error(f"Delete Company Error: {str(e)}")
         frappe.db.rollback()
         return {'success': False, 'error': str(e)}
-
+    
 # ===== REQUEST CRUD OPERATIONS =====
 
 @frappe.whitelist()

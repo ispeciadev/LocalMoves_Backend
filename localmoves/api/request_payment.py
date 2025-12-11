@@ -16,7 +16,7 @@ from localmoves.api.request import (
     generate_item_description
 )
 from localmoves.api.request_pricing import calculate_comprehensive_price
-
+from localmoves.api.company import search_companies_with_cost
 
 # ==================== REQUEST PAYMENT CONFIGURATION ====================
 
@@ -251,6 +251,8 @@ def send_payment_confirmation_email(user_email, user_name, request_id, payment_d
 def create_request_with_payment():
     """
     Create logistics request with integrated payment system
+    Only 10% deposit payment is processed initially
+    NOW USES search_companies_with_cost FOR PRICING
     """
     try:
         # Step 1: Authenticate user
@@ -291,7 +293,7 @@ def create_request_with_payment():
         requested_company_name = data.get('company_name')
         distance_miles = float(data.get('distance_miles', 0))
         
-        # Payment fields
+        # Payment fields - ONLY FOR 10% DEPOSIT
         payment_method = data.get('payment_method', 'Stripe')
         process_deposit = data.get('process_deposit', False)
         transaction_ref = data.get('transaction_ref')
@@ -303,14 +305,17 @@ def create_request_with_payment():
         delivery_assessment = data.get('delivery_assessment', {})
         move_date_data = data.get('move_date_data', {})
         
+        # Get PRE-CALCULATED price breakdown from frontend
+        price_breakdown = data.get('price_breakdown', {})
+        
         # Generate item description
         item_description = generate_item_description(pricing_data)
         
-        # Step 3: Validate company and calculate pricing
+        # Step 3: Validate company and get final price
         if not requested_company_name:
             return {
                 "success": False,
-                "message": "Company selection required for pricing calculation"
+                "message": "Company selection required"
             }
         
         # Validate company exists
@@ -325,24 +330,14 @@ def create_request_with_payment():
                 "message": f"Cannot assign to {requested_company_name}. {sub_check.get('message')}"
             }
         
-        # Get company document
-        company = frappe.get_doc("Logistics Company", requested_company_name)
+        # Validate price_breakdown exists and has final_total
+        if not price_breakdown or 'final_total' not in price_breakdown:
+            return {
+                "success": False,
+                "message": "price_breakdown with final_total is required. Please call search_companies_with_cost first to get pricing."
+            }
         
-        # Calculate detailed pricing
-        try:
-            price_breakdown = calculate_comprehensive_price({
-                'pricing_data': pricing_data,
-                'collection_assessment': collection_assessment,
-                'delivery_assessment': delivery_assessment,
-                'move_date_data': move_date_data,
-                'distance_miles': distance_miles
-            }, company)
-            
-            if not price_breakdown:
-                return {"success": False, "message": "Pricing calculation returned None"}
-                
-        except Exception as price_error:
-            return {"success": False, "message": f"Pricing calculation failed: {str(price_error)}"}
+        final_total = float(price_breakdown['final_total'])
         
         # Check capacity
         limit_check = check_view_limit(requested_company_name)
@@ -395,7 +390,7 @@ def create_request_with_payment():
             "distance_miles": distance_miles,
             
             # Price breakdown
-            "estimated_cost": price_breakdown['final_total'],
+            "estimated_cost": final_total,
             "price_breakdown": json.dumps(price_breakdown),
             
             # Payment fields
@@ -415,8 +410,8 @@ def create_request_with_payment():
         # Insert request
         request_doc.insert(ignore_permissions=True)
         
-        # Step 5: Create Payment Transaction
-        payment_amounts = calculate_payment_amounts(price_breakdown['final_total'])
+        # Step 5: Create Payment Transaction (ONLY 10% DEPOSIT)
+        payment_amounts = calculate_payment_amounts(final_total)
         
         payment_doc = create_payment_transaction(
             request_id=request_doc.name,
@@ -425,26 +420,30 @@ def create_request_with_payment():
             user_info=user_info
         )
         
-        # Step 6: Process deposit if requested
+        # Step 6: Process ONLY 10% deposit if payment requested
         if process_deposit and transaction_ref:
+            # Mark deposit as paid
             payment_doc.db_set('deposit_status', "Paid", update_modified=False)
             payment_doc.db_set('deposit_paid_at', datetime.now(), update_modified=False)
             payment_doc.db_set('deposit_transaction_ref', transaction_ref, update_modified=False)
             payment_doc.db_set('payment_method', payment_method, update_modified=False)
-            payment_doc.db_set('payment_status', "Paid", update_modified=False)  # CHANGED: Was "Deposit Paid"
+            
+            # IMPORTANT: Payment status is "Deposit Paid" not "Fully Paid"
+            payment_doc.db_set('payment_status', "Deposit Paid", update_modified=False)
+            
+            # FIXED: Balance status should be "Paid" when deposit is done
+            payment_doc.db_set('balance_status', "Paid", update_modified=False)
             
             if gateway_response:
                 payment_doc.db_set('gateway_response', json.dumps(gateway_response), update_modified=False)
             
-            # Update request
-            request_doc.db_set('payment_status', "Paid", update_modified=False)  # CHANGED: Was "Deposit Paid"
+            # Update request - only deposit paid
+            request_doc.db_set('payment_status', "Deposit Paid", update_modified=False)
             request_doc.db_set('deposit_paid', payment_doc.deposit_amount, update_modified=False)
             request_doc.db_set('remaining_amount', payment_doc.remaining_amount, update_modified=False)
             request_doc.db_set('payment_verified_at', datetime.now(), update_modified=False)
-
-
-        # Step 7: Link payment to request
-        if not process_deposit:
+        else:
+            # No deposit payment processed yet
             update_request_with_payment(request_doc, payment_doc)
         
         # Increment view count if assigned
@@ -453,9 +452,8 @@ def create_request_with_payment():
         
         frappe.db.commit()
         
-        # Step 8: Send confirmation emails
+        # Step 7: Send confirmation emails
         try:
-            # Send standard request confirmation email
             send_request_confirmation_email(
                 user_email=email,
                 user_name=full_name,
@@ -474,9 +472,9 @@ def create_request_with_payment():
                 service_type="Standard"
             )
         except Exception as email_error:
-            print(f"Standard confirmation email failed for {request_doc.name}: {str(email_error)}")
+            frappe.log_error(f"Standard confirmation email failed: {str(email_error)}")
         
-        # Send payment confirmation email with pricing details
+        # Send payment confirmation email
         try:
             send_payment_confirmation_email(
                 user_email=email,
@@ -487,8 +485,8 @@ def create_request_with_payment():
                     'total_amount': payment_amounts["total_amount"],
                     'deposit_amount': payment_amounts["deposit_amount"],
                     'remaining_amount': payment_amounts["remaining_amount"],
-                    'payment_status': "Paid",
-                    'deposit_status': "Paid",
+                    'payment_status': "Deposit Paid" if process_deposit else "Pending",
+                    'deposit_status': "Paid" if process_deposit else "Unpaid",
                     'deposit_paid': process_deposit
                 },
                 request_data={
@@ -505,31 +503,38 @@ def create_request_with_payment():
                 price_breakdown=price_breakdown
             )
         except Exception as email_error:
-            print(f"Payment confirmation email failed for {request_doc.name}: {str(email_error)}")
+            frappe.log_error(f"Payment confirmation email failed: {str(email_error)}")
         
-        # Step 9: Return response
-        deposit_processed_msg = " Deposit payment processed." if process_deposit else ""
+        # Step 8: Return response
+        deposit_status_msg = ""
+        if process_deposit:
+            deposit_status_msg = f" 10% deposit (£{payment_amounts['deposit_amount']:.2f}) paid successfully. Remaining balance: £{payment_amounts['remaining_amount']:.2f}"
+        else:
+            deposit_status_msg = f" Please pay 10% deposit (£{payment_amounts['deposit_amount']:.2f}) to confirm booking."
         
         return {
             "success": True,
-            "message": f"Request created successfully{assignment_message}.{deposit_processed_msg}",
+            "message": f"Request created successfully{assignment_message}.{deposit_status_msg}",
             "data": {
                 "request_id": request_doc.name,
                 "status": request_doc.status,
                 "company_name": final_company_name,
                 "will_appear_in_blurred": previously_assigned_to is not None,
                 
-                # Payment information
+                # Payment information - ONLY 10% DEPOSIT
                 "payment": {
                     "payment_id": payment_doc.name,
                     "total_amount": payment_amounts["total_amount"],
                     "deposit_amount": payment_amounts["deposit_amount"],
                     "remaining_amount": payment_amounts["remaining_amount"],
-                    "payment_status": payment_doc.payment_status,
-                    "deposit_status": payment_doc.deposit_status,
+                    "payment_status": "Deposit Paid" if process_deposit else "Pending",
+                    "deposit_status": "Paid" if process_deposit else "Unpaid",
+                    "balance_status": "Paid" if process_deposit else "Unpaid",
                     "payment_method": payment_method,
                     "currency": REQUEST_PAYMENT_CONFIG["currency"],
-                    "deposit_paid": process_deposit
+                    "deposit_paid": process_deposit,
+                    "deposit_percentage": 10,
+                    "note": "Only 10% deposit has been processed. Remaining 90% to be paid later."
                 },
                 
                 # Pricing breakdown
@@ -538,13 +543,13 @@ def create_request_with_payment():
         }
         
     except frappe.AuthenticationError as e:
+        frappe.log_error(f"Authentication error: {str(e)}")
         return {"success": False, "message": f"Authentication error: {str(e)}"}
     except Exception as e:
-        print(f"Create Request with Payment Error: {str(e)}\n{traceback.format_exc()}")
+        frappe.log_error(f"Create Request with Payment Error: {str(e)}\n{traceback.format_exc()}")
         frappe.db.rollback()
         return {"success": False, "message": f"Failed to create request: {str(e)}"}
-
-
+    
 # ==================== PROCESS FULL PAYMENT ====================
 
 @frappe.whitelist(allow_guest=True)
