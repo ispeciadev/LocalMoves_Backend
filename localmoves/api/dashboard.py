@@ -1,12 +1,21 @@
-# dashboard.py
+
+
 
 import frappe
 from frappe import _
 from localmoves.utils.jwt_handler import get_current_user
+from localmoves.utils.config_manager import get_config, update_config
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import json
 from functools import wraps
+
+
+DEFAULT_SYSTEM_CONFIG = {
+    "deposit_percentage": 10,
+    "currency": "GBP",
+    "refund_policy_days": 7
+}
 
 def ignore_csrf(fn):
     """Decorator to bypass CSRF check for API endpoints"""
@@ -341,7 +350,8 @@ def delete_request():
             'success': False, 
             'error': str(e)
         }    
-    
+
+@frappe.whitelist()    
 def get_all_payments():
     """Get all payments"""
     try:
@@ -4881,3 +4891,362 @@ def delete_contact_submission():
         frappe.log_error(f"Delete Contact Submission Error: {str(e)}")
         frappe.db.rollback()
         return {'success': False, 'error': str(e)}
+    
+
+
+# Add at the very end of dashboard.py
+# REPLACE the get_system_config_from_db() function at the END of dashboard.py with this:
+
+def get_system_config_from_db():
+    """Get system config from DB, create if doesn't exist"""
+    try:
+        # Direct SQL check - more reliable
+        exists = frappe.db.sql("""
+            SELECT name FROM `tabSystem Configuration` 
+            WHERE name = 'admin_config' 
+            LIMIT 1
+        """, as_dict=True)
+        
+        if not exists:
+            # Create new record using SQL
+            frappe.db.sql("""
+                INSERT INTO `tabSystem Configuration` 
+                (name, config_name, config_data, is_active, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                "admin_config",
+                "admin_config", 
+                json.dumps(DEFAULT_SYSTEM_CONFIG),
+                1,
+                datetime.now(),
+                datetime.now()
+            ))
+            frappe.db.commit()
+            frappe.logger().info("Created System Configuration via SQL")
+            return DEFAULT_SYSTEM_CONFIG
+        
+        # Get existing record
+        result = frappe.db.sql("""
+            SELECT config_data 
+            FROM `tabSystem Configuration` 
+            WHERE name = 'admin_config'
+        """, as_dict=True)
+        
+        if result and result[0].get('config_data'):
+            config_data = json.loads(result[0]['config_data'])
+            # Merge with defaults for any missing keys
+            merged = DEFAULT_SYSTEM_CONFIG.copy()
+            merged.update(config_data)
+            return merged
+        
+        return DEFAULT_SYSTEM_CONFIG
+        
+    except Exception as e:
+        frappe.log_error(f"Get System Config Error: {str(e)}")
+        return DEFAULT_SYSTEM_CONFIG
+
+def get_deposit_percentage():
+    """Get current deposit percentage from config"""
+    try:
+        config = get_system_config_from_db()
+        return config.get('deposit_percentage', 10)
+    except:
+        return 10
+
+@frappe.whitelist(allow_guest=False)
+def get_system_settings():
+    """Get all system settings - Admin only"""
+    if not check_admin_permission():
+        return {'success': False, 'message': 'Admin only'}
+    return {'success': True, 'data': get_system_config_from_db()}
+
+@frappe.whitelist(allow_guest=False)
+def update_deposit_percentage_quick():
+    """Quick update deposit percentage - Admin only"""
+    if not check_admin_permission():
+        return {'success': False, 'message': 'Admin only'}
+    
+    data = get_request_data()
+    new_pct = float(data.get('deposit_percentage', 10))
+    
+    if new_pct < 0 or new_pct > 100:
+        return {'success': False, 'message': 'Must be 0-100'}
+    
+    try:
+        # Get OLD value first
+        old_result = frappe.db.sql("""
+            SELECT config_data 
+            FROM `tabSystem Configuration` 
+            WHERE name = 'admin_config'
+        """, as_dict=True)
+        
+        if old_result:
+            old_config = json.loads(old_result[0]['config_data'])
+            old_pct = old_config.get('deposit_percentage', 10)
+        else:
+            old_pct = 10
+        
+        # Update the value
+        config = get_system_config_from_db()
+        config['deposit_percentage'] = new_pct
+        
+        # Direct SQL update
+        frappe.db.sql("""
+            UPDATE `tabSystem Configuration`
+            SET config_data = %s, updated_at = %s
+            WHERE name = 'admin_config'
+        """, (json.dumps(config), datetime.now()))
+        
+        frappe.db.commit()
+        
+        return {
+            'success': True,
+            'message': f'Updated from {old_pct}% to {new_pct}%',
+            'old_value': old_pct,
+            'new_value': new_pct
+        }
+    except Exception as e:
+        frappe.log_error(f"Update Deposit % Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'message': str(e)}
+
+@frappe.whitelist(allow_guest=True)
+def get_current_deposit_percentage():
+    """Public API to get current deposit percentage"""
+    config = get_system_config_from_db()
+    return {
+        'success': True,
+        'deposit_percentage': config.get('deposit_percentage', 10),
+        'currency': config.get('currency', 'GBP')
+    }
+
+
+# ===== CONFIGURATION MANAGEMENT (ADMIN ONLY) =====
+
+@frappe.whitelist()
+def get_system_configuration():
+    """Get all system configuration - Admin only"""
+    if not check_admin_permission():
+        frappe.throw(_("You do not have permission to access system configuration"), frappe.PermissionError)
+    
+    try:
+        config = get_config()
+        return {
+            'success': True,
+            'data': config
+        }
+    except Exception as e:
+        frappe.log_error(title="Get Config Error", message=str(e))
+        return {
+            'success': False,
+            'message': str(e)
+        }
+
+
+@frappe.whitelist()
+@frappe.whitelist()
+def update_system_configuration():
+    """Update system configuration - Admin only"""
+    if not check_admin_permission():
+        frappe.throw(_("You do not have permission to update system configuration"), frappe.PermissionError)
+    
+    try:
+        data = get_request_data()
+        
+        # Get current config and update with new values
+        current_config = get_config()
+        
+        # Update specific config sections if provided
+        if data.get('pricing'):
+            current_config['pricing'].update(data['pricing'])
+        if data.get('vehicle_capacities'):
+            current_config['vehicle_capacities'].update(data['vehicle_capacities'])
+        if data.get('property_volumes'):
+            current_config['property_volumes'].update(data['property_volumes'])
+        if data.get('additional_spaces'):
+            current_config['additional_spaces'].update(data['additional_spaces'])
+        if data.get('quantity_multipliers'):
+            current_config['quantity_multipliers'].update(data['quantity_multipliers'])
+        if data.get('vehicle_space_multipliers'):
+            current_config['vehicle_space_multipliers'].update(data['vehicle_space_multipliers'])
+        if data.get('plan_limits'):
+            current_config['plan_limits'].update(data['plan_limits'])
+        if data.get('collection_assessment'):
+            current_config['collection_assessment'].update(data['collection_assessment'])
+        if data.get('notice_period_multipliers'):
+            current_config['notice_period_multipliers'].update(data['notice_period_multipliers'])
+        if data.get('move_day_multipliers'):
+            current_config['move_day_multipliers'].update(data['move_day_multipliers'])
+        
+        # Save updated config
+        success, message = update_config(current_config)
+        
+        if success:
+            return {
+                'success': True,
+                'message': 'Configuration updated successfully',
+                'data': current_config
+            }
+        else:
+            return {
+                'success': False,
+                'message': message
+            }
+    except Exception as e:
+        frappe.log_error(title="Update Config Error", message=str(e))
+        return {
+            'success': False,
+            'message': str(e)
+        }
+
+
+@frappe.whitelist()
+def get_pricing_configuration():
+    """Get pricing configuration"""
+    if not check_admin_permission():
+        frappe.throw(_("You do not have permission to access pricing configuration"), frappe.PermissionError)
+    
+    try:
+        pricing = get_config('pricing')
+        return {
+            'success': True,
+            'data': pricing
+        }
+    except Exception as e:
+        return {'success': False, 'message': str(e)}
+
+
+@frappe.whitelist()
+def update_pricing_configuration():
+    """Update pricing configuration"""
+    if not check_admin_permission():
+        frappe.throw(_("You do not have permission to update pricing"), frappe.PermissionError)
+    
+    try:
+        data = get_request_data()
+        config = get_config()
+        
+        # Update pricing section
+        config['pricing'].update(data.get('pricing', {}))
+        
+        if update_config(config):
+            return {
+                'success': True,
+                'message': 'Pricing configuration updated successfully',
+                'data': config['pricing']
+            }
+        else:
+            return {'success': False, 'message': 'Failed to update pricing'}
+    except Exception as e:
+        frappe.log_error(title="Update Pricing Error", message=str(e))
+        return {'success': False, 'message': str(e)}
+
+
+@frappe.whitelist()
+def get_vehicle_configuration():
+    """Get vehicle and capacity configuration"""
+    if not check_admin_permission():
+        frappe.throw(_("You do not have permission to access vehicle configuration"), frappe.PermissionError)
+    
+    try:
+        config_data = get_config()
+        return {
+            'success': True,
+            'vehicle_capacities': config_data.get('vehicle_capacities', {}),
+            'vehicle_space_multipliers': config_data.get('vehicle_space_multipliers', {}),
+            'property_volumes': config_data.get('property_volumes', {}),
+        }
+    except Exception as e:
+        return {'success': False, 'message': str(e)}
+
+
+@frappe.whitelist()
+def update_vehicle_configuration():
+    """Update vehicle configuration"""
+    if not check_admin_permission():
+        frappe.throw(_("You do not have permission to update vehicle configuration"), frappe.PermissionError)
+    
+    try:
+        data = get_request_data()
+        config = get_config()
+        
+        if data.get('vehicle_capacities'):
+            config['vehicle_capacities'].update(data['vehicle_capacities'])
+        if data.get('vehicle_space_multipliers'):
+            config['vehicle_space_multipliers'].update(data['vehicle_space_multipliers'])
+        if data.get('property_volumes'):
+            config['property_volumes'].update(data['property_volumes'])
+        
+        if update_config(config):
+            return {
+                'success': True,
+                'message': 'Vehicle configuration updated successfully',
+                'data': {
+                    'vehicle_capacities': config['vehicle_capacities'],
+                    'vehicle_space_multipliers': config['vehicle_space_multipliers'],
+                    'property_volumes': config['property_volumes'],
+                }
+            }
+        else:
+            return {'success': False, 'message': 'Failed to update vehicle configuration'}
+    except Exception as e:
+        frappe.log_error(title="Update Vehicle Config Error", message=str(e))
+        return {'success': False, 'message': str(e)}
+
+
+@frappe.whitelist()
+def get_multiplier_configuration():
+    """Get all multiplier configurations"""
+    if not check_admin_permission():
+        frappe.throw(_("You do not have permission to access multiplier configuration"), frappe.PermissionError)
+    
+    try:
+        config_data = get_config()
+        return {
+            'success': True,
+            'quantity_multipliers': config_data.get('quantity_multipliers', {}),
+            'collection_assessment': config_data.get('collection_assessment', {}),
+            'notice_period_multipliers': config_data.get('notice_period_multipliers', {}),
+            'move_day_multipliers': config_data.get('move_day_multipliers', {}),
+        }
+    except Exception as e:
+        return {'success': False, 'message': str(e)}
+
+
+@frappe.whitelist()
+def update_multiplier_configuration():
+    """Update multiplier configurations"""
+    if not check_admin_permission():
+        frappe.throw(_("You do not have permission to update multipliers"), frappe.PermissionError)
+    
+    try:
+        data = get_request_data()
+        config = get_config()
+        
+        if data.get('quantity_multipliers'):
+            config['quantity_multipliers'].update(data['quantity_multipliers'])
+        if data.get('collection_assessment'):
+            config['collection_assessment'].update(data['collection_assessment'])
+        if data.get('notice_period_multipliers'):
+            config['notice_period_multipliers'].update(data['notice_period_multipliers'])
+        if data.get('move_day_multipliers'):
+            config['move_day_multipliers'].update(data['move_day_multipliers'])
+        
+        if update_config(config):
+            return {
+                'success': True,
+                'message': 'Multiplier configuration updated successfully',
+                'data': {
+                    'quantity_multipliers': config['quantity_multipliers'],
+                    'collection_assessment': config['collection_assessment'],
+                    'notice_period_multipliers': config['notice_period_multipliers'],
+                    'move_day_multipliers': config['move_day_multipliers'],
+                }
+            }
+        else:
+            return {'success': False, 'message': 'Failed to update multiplier configuration'}
+    except Exception as e:
+        frappe.log_error(title="Update Multiplier Config Error", message=str(e))
+        return {'success': False, 'message': str(e)}
+
+

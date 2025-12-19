@@ -1,0 +1,329 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:config_name",
+ "creation": "2024-12-16 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "config_name",
+  "section_house",
+  "house_2bed_volume",
+  "house_3bed_volume",
+  "house_4bed_volume",
+  "house_5bed_volume",
+  "house_6bed_volume",
+  "column_break_1",
+  "section_flat",
+  "flat_studio_volume",
+  "flat_1bed_volume",
+  "flat_2bed_volume",
+  "flat_3bed_volume",
+  "flat_4bed_volume",
+  "column_break_2",
+  "section_office",
+  "office_2ws_volume",
+  "office_4ws_volume",
+  "office_8ws_volume",
+  "office_15ws_volume",
+  "office_25ws_volume",
+  "column_break_3",
+  "section_additional",
+  "shed_volume",
+  "loft_volume",
+  "basement_volume",
+  "single_garage_volume",
+  "double_garage_volume",
+  "column_break_4",
+  "section_multipliers",
+  "some_things_multiplier",
+  "half_contents_multiplier",
+  "three_quarter_multiplier",
+  "everything_multiplier"
+ ],
+ "fields": [
+  {
+   "fieldname": "config_name",
+   "fieldtype": "Data",
+   "label": "Configuration Name",
+   "reqd": 1,
+   "unique": 1,
+   "read_only": 0
+  },
+  {
+   "fieldname": "section_house",
+   "fieldtype": "Section Break",
+   "label": "House Volumes (m³)"
+  },
+  {
+   "fieldname": "house_2bed_volume",
+   "fieldtype": "Float",
+   "label": "2 Bedroom House",
+   "reqd": 1,
+   "default": "25",
+   "precision": 2
+  },
+  {
+   "fieldname": "house_3bed_volume",
+   "fieldtype": "Float",
+   "label": "3 Bedroom House",
+   "reqd": 1,
+   "default": "40",
+   "precision": 2
+  },
+  {
+   "fieldname": "house_4bed_volume",
+   "fieldtype": "Float",
+   "label": "4 Bedroom House",
+   "reqd": 1,
+   "default": "50",
+   "precision": 2
+  },
+  {
+   "fieldname": "house_5bed_volume",
+   "fieldtype": "Float",
+   "label": "5 Bedroom House",
+   "reqd": 1,
+   "default": "65",
+   "precision": 2
+  },
+  {
+   "fieldname": "house_6bed_volume",
+   "fieldtype": "Float",
+   "label": "6 Bedroom House",
+   "reqd": 1,
+   "default": "80",
+   "precision": 2
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_flat",
+   "fieldtype": "Section Break",
+   "label": "Flat Volumes (m³)"
+  },
+  {
+   "fieldname": "flat_studio_volume",
+   "fieldtype": "Float",
+   "label": "Studio Flat",
+   "reqd": 1,
+   "default": "12",
+   "precision": 2
+  },
+  {
+   "fieldname": "flat_1bed_volume",
+   "fieldtype": "Float",
+   "label": "1 Bedroom Flat",
+   "reqd": 1,
+   "default": "18",
+   "precision": 2
+  },
+  {
+   "fieldname": "flat_2bed_volume",
+   "fieldtype": "Float",
+   "label": "2 Bedroom Flat",
+   "reqd": 1,
+   "default": "28",
+   "precision": 2
+  },
+  {
+   "fieldname": "flat_3bed_volume",
+   "fieldtype": "Float",
+   "label": "3 Bedroom Flat",
+   "reqd": 1,
+   "default": "38",
+   "precision": 2
+  },
+  {
+   "fieldname": "flat_4bed_volume",
+   "fieldtype": "Float",
+   "label": "4 Bedroom Flat",
+   "reqd": 1,
+   "default": "48",
+   "precision": 2
+  },
+  {
+   "fieldname": "column_break_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_office",
+   "fieldtype": "Section Break",
+   "label": "Office Volumes (m³)"
+  },
+  {
+   "fieldname": "office_2ws_volume",
+   "fieldtype": "Float",
+   "label": "2 Workstations Office",
+   "reqd": 1,
+   "default": "7",
+   "precision": 2
+  },
+  {
+   "fieldname": "office_4ws_volume",
+   "fieldtype": "Float",
+   "label": "4 Workstations Office",
+   "reqd": 1,
+   "default": "12",
+   "precision": 2
+  },
+  {
+   "fieldname": "office_8ws_volume",
+   "fieldtype": "Float",
+   "label": "8 Workstations Office",
+   "reqd": 1,
+   "default": "22",
+   "precision": 2
+  },
+  {
+   "fieldname": "office_15ws_volume",
+   "fieldtype": "Float",
+   "label": "15 Workstations Office",
+   "reqd": 1,
+   "default": "40",
+   "precision": 2
+  },
+  {
+   "fieldname": "office_25ws_volume",
+   "fieldtype": "Float",
+   "label": "25 Workstations Office",
+   "reqd": 1,
+   "default": "70",
+   "precision": 2
+  },
+  {
+   "fieldname": "column_break_3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_additional",
+   "fieldtype": "Section Break",
+   "label": "Additional Spaces (m³)"
+  },
+  {
+   "fieldname": "shed_volume",
+   "fieldtype": "Float",
+   "label": "Shed",
+   "reqd": 1,
+   "default": "4",
+   "precision": 2
+  },
+  {
+   "fieldname": "loft_volume",
+   "fieldtype": "Float",
+   "label": "Loft",
+   "reqd": 1,
+   "default": "6",
+   "precision": 2
+  },
+  {
+   "fieldname": "basement_volume",
+   "fieldtype": "Float",
+   "label": "Basement",
+   "reqd": 1,
+   "default": "10",
+   "precision": 2
+  },
+  {
+   "fieldname": "single_garage_volume",
+   "fieldtype": "Float",
+   "label": "Single Garage",
+   "reqd": 1,
+   "default": "8",
+   "precision": 2
+  },
+  {
+   "fieldname": "double_garage_volume",
+   "fieldtype": "Float",
+   "label": "Double Garage",
+   "reqd": 1,
+   "default": "15",
+   "precision": 2
+  },
+  {
+   "fieldname": "column_break_4",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_multipliers",
+   "fieldtype": "Section Break",
+   "label": "Quantity Multipliers"
+  },
+  {
+   "fieldname": "some_things_multiplier",
+   "fieldtype": "Float",
+   "label": "Some Things (25%)",
+   "reqd": 1,
+   "default": "0.25",
+   "precision": 3
+  },
+  {
+   "fieldname": "half_contents_multiplier",
+   "fieldtype": "Float",
+   "label": "Half Contents (50%)",
+   "reqd": 1,
+   "default": "0.50",
+   "precision": 3
+  },
+  {
+   "fieldname": "three_quarter_multiplier",
+   "fieldtype": "Float",
+   "label": "Three Quarter (75%)",
+   "reqd": 1,
+   "default": "0.75",
+   "precision": 3
+  },
+  {
+   "fieldname": "everything_multiplier",
+   "fieldtype": "Float",
+   "label": "Everything (100%)",
+   "reqd": 1,
+   "default": "1.00",
+   "precision": 3
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2024-12-16 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "LocalMoves",
+ "name": "Property Configuration",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Admin",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "quick_entry": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
+
+

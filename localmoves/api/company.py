@@ -1,84 +1,40 @@
+
 import frappe
 from frappe import _
 from localmoves.utils.jwt_handler import get_current_user
+from localmoves.utils.config_manager import (
+    get_config,
+    get_vehicle_capacities,
+    get_property_volumes,
+    get_additional_spaces,
+    get_quantity_multipliers,
+    get_vehicle_space_multipliers,
+    get_plan_limits,
+    get_pricing_config,              # ADD THIS
+    get_collection_assessment,       # ADD THIS
+    get_notice_period_multipliers,   # ADD THIS
+    get_move_day_multipliers         # ADD THIS
+)
 from datetime import datetime
 import json
 
-
-
-# ==================== CORRECTED CONSTANTS FROM SPREADSHEET ====================
-
-# Vehicle capacities (m³) - THESE ARE FIXED PER VEHICLE TYPE
-VEHICLE_CAPACITIES = {
-    'swb_van': 5,
-    'mwb_van': 8,
-    'lwb_van': 11,
-    # NO xlwb_van in spreadsheet
-}
-
-# Property volumes (m³)
-PROPERTY_VOLUMES = {
-    'a_few_items': {
-        'swb_van': 5,
-        'mwb_van': 8,
-        'lwb_van': 11,
-        # NO xlwb_van - removed as not in spreadsheet
-    },
-    'house': {
-        '2_bed': 25,
-        '3_bed': 40,
-        '4_bed': 50,
-        '5_bed': 65,
-        '6_bed': 80,
-    },
-    'flat': {
-        'studio': 12,
-        '1_bed': 18,
-        '2_bed': 28,
-        '3_bed': 38,
-        '4_bed': 48,
-    },
-    'office': {
-        '2_workstations': 7,
-        '4_workstations': 12,
-        '8_workstations': 22,
-        '15_workstations': 40,
-        '25_workstations': 70,
+@frappe.whitelist(allow_guest=False)
+def fix_assessment_config():
+    from localmoves.utils.config_manager import update_config, get_config
+    
+    config = get_config()
+    config['collection_assessment'] = {
+        'parking': {'driveway': 0.0, 'roadside': 0.0},
+        'parking_distance': {'less_than_10m': 0.05, '10_to_20m': 0.10, 'over_20m': 0.15},
+        'house_type': {'house_ground_and_1st': 0.05, 'bungalow_ground': 0.0, 'townhouse_ground_1st_2nd': 0.10},
+        'internal_access': {'stairs_only': 0.0, 'lift_access': 0.025},
+        'floor_level': {'ground_floor': 0.0, '1st_floor': 0.10, '2nd_floor': 0.15, '3rd_floor_plus': 0.20}
     }
-}
-
-# FIXED: Additional spaces (m³) - CORRECTED VALUES FROM SPREADSHEET
-ADDITIONAL_SPACES = {
-    'shed': 4,           # Was 8 - FIXED
-    'loft': 6,           # Was 12 - FIXED
-    'basement': 10,      # Was 20 - FIXED
-    'single_garage': 8,  # Was 16 - FIXED
-    'double_garage': 15, # Was 30 - FIXED
-}
-
-# Quantity multipliers
-QUANTITY_MULTIPLIERS = {
-    'some_things': 0.25,
-    'half_contents': 0.5,
-    'three_quarter': 0.75,
-    'everything': 1.0,
-}
-
-# Vehicle space multipliers (for a_few_items)
-VEHICLE_SPACE_MULTIPLIERS = {
-    'quarter_van': 0.25,
-    'half_van': 0.5,
-    'three_quarter_van': 0.75,
-    'whole_van': 1.0,
-}
-
-# Subscription plan limits
-PLAN_LIMITS = {
-    "Free": 5,
-    "Basic": 20,
-    "Standard": 50,
-    "Premium": -1   # Unlimited
-}
+    update_config(config)
+    return {"success": True, "message": "Fixed"}
+# ==================== DYNAMIC CONSTANTS FROM CONFIG MANAGER ====================
+# These constants are now loaded from the System Configuration doctype
+# Admins can update these via the dashboard without code changes
 
 def safe_log(title, message):
     """Safely log without exceeding character limits"""
@@ -102,8 +58,9 @@ def check_company_can_view_requests(company):
     plan = company.get('subscription_plan', 'Free')
     viewed_count = int(company.get('requests_viewed_this_month', 0) or 0)
     
-    # Get limit for the plan
-    limit = PLAN_LIMITS.get(plan, 5)  # Default to 5 if plan not found
+    # Get limit for the plan from dynamic config
+    plan_limits = get_plan_limits()
+    limit = plan_limits.get(plan, 5)  # Default to 5 if plan not found
     
     # Premium (-1) means unlimited
     if limit == -1:
@@ -985,14 +942,14 @@ def search_number_of_companies_by_pincode(pincode=None):
                 # Add plan info for transparency
                 plan = company.get('subscription_plan', 'Free')
                 viewed = int(company.get('requests_viewed_this_month', 0) or 0)
-                limit = PLAN_LIMITS.get(plan, 5)
+                # limit = PLAN_LIMITS.get(plan, 5)
                 
-                company['subscription_info'] = {
-                    'plan': plan,
-                    'views_used': viewed,
-                    'views_limit': limit if limit != -1 else 'Unlimited',
-                    'views_remaining': (limit - viewed) if limit != -1 else 'Unlimited'
-                }
+                # company['subscription_info'] = {
+                #     'plan': plan,
+                #     'views_used': viewed,
+                #     'views_limit': limit if limit != -1 else 'Unlimited',
+                #     'views_remaining': (limit - viewed) if limit != -1 else 'Unlimited'
+                # }
                 
                 available_companies.append(company)
         
@@ -1011,40 +968,136 @@ def search_number_of_companies_by_pincode(pincode=None):
 
 
 
+def auto_calculate_volumes(selected_items, dismantle_items):
+    """
+    Automatically calculate packing, dismantling, and reassembly volumes
+    
+    Args:
+        selected_items: Dict of item names and quantities
+        dismantle_items: Dict of item names marked for dismantling
+    
+    Returns:
+        dict with packing_volume_m3, dismantling_volume_m3, reassembly_volume_m3
+    """
+    # Items that ALWAYS need packing (small/fragile items)
+    # ALWAYS_PACK_KEYWORDS = [
+    #     'ornaments', 'fragile', 'plant', 'suitcase', 'boxes',
+    #     'kitchen bin', 'general', 'garden tools', 'shelves contents',
+    #     'misc', 'other', 'accessories', 'decorations'
+    # ]
+    
+    # # Items that NEVER need packing (large furniture/appliances)
+    # NEVER_PACK_KEYWORDS = [
+    #     'bed', 'mattress', 'sofa', 'wardrobe', 'table', 'chair',
+    #     'desk', 'cabinet', 'bookcase', 'chest', 'drawers',
+    #     'fridge', 'freezer', 'washing', 'dishwasher', 'cooker',
+    #     'tv', 'stand', 'sideboard', 'cot', 'bunk'
+    # ]
+    
+    # Small threshold: items under this volume (m³) need packing
+    SMALL_ITEM_THRESHOLD = 0.5  # Items smaller than 0.5m³ typically need packing
+    
+    packing_volume = 0
+    dismantling_volume = 0
+    reassembly_volume = 0
+    
+    for item_name, quantity in selected_items.items():
+        try:
+            # Get item from inventory
+            item = frappe.get_doc("Moving Inventory Item", item_name)
+            volume_per_item = item.average_volume
+            total_item_volume = volume_per_item * int(quantity)
+            
+            item_name_lower = item_name.lower()
+            
+            # ========== 1. PACKING VOLUME ==========
+            needs_packing = False
+            
+            # First check: Does it ALWAYS need packing? (small items)
+            for keyword in ALWAYS_PACK_KEYWORDS:
+                if keyword in item_name_lower:
+                    needs_packing = True
+                    break
+            
+            # Second check: Is it large furniture that NEVER needs packing?
+            is_large_furniture = False
+            for keyword in NEVER_PACK_KEYWORDS:
+                if keyword in item_name_lower:
+                    is_large_furniture = True
+                    break
+            
+            # If not explicitly categorized, use volume threshold
+            if not needs_packing and not is_large_furniture:
+                if volume_per_item < SMALL_ITEM_THRESHOLD:
+                    needs_packing = True
+            
+            # Override: large furniture never gets packed
+            if is_large_furniture:
+                needs_packing = False
+            
+            # Add to packing volume if needed
+            if needs_packing:
+                packing_volume += total_item_volume
+            
+            # ========== 2. DISMANTLING VOLUME ==========
+            # Check if item is marked for dismantling
+            if dismantle_items.get(item_name, False):
+                dismantling_volume += total_item_volume
+                # If dismantled, it will also need reassembly
+                reassembly_volume += total_item_volume
+            
+        except Exception as e:
+            frappe.log_error(f"Volume calculation error for {item_name}: {str(e)}", 
+                           "Auto Calculate Volumes")
+            continue
+    
+    return {
+        'packing_volume_m3': round(packing_volume, 2),
+        'dismantling_volume_m3': round(dismantling_volume, 2),
+        'reassembly_volume_m3': round(reassembly_volume, 2)
+    }
+
+
 def calculate_total_volume(pricing_data):
     """Calculate total volume based on property type"""
     property_type = pricing_data.get('property_type')
     total_volume = 0
     
+    # Load dynamic config
+    property_volumes = get_property_volumes()
+    additional_spaces = get_additional_spaces()
+    quantity_multipliers = get_quantity_multipliers()
+    vehicle_space_multipliers = get_vehicle_space_multipliers()
+    
     if property_type == 'a_few_items':
         vehicle_type = pricing_data.get('vehicle_type')
         space_usage = pricing_data.get('space_usage')
-        base_volume = PROPERTY_VOLUMES['a_few_items'].get(vehicle_type, 0)
-        multiplier = VEHICLE_SPACE_MULTIPLIERS.get(space_usage, 1.0)
+        base_volume = property_volumes['a_few_items'].get(vehicle_type, 0)
+        multiplier = vehicle_space_multipliers.get(space_usage, 1.0)
         total_volume = base_volume * multiplier
         
     elif property_type == 'house':
         house_size = pricing_data.get('house_size')
-        additional_spaces = pricing_data.get('additional_spaces', [])
+        add_spaces = pricing_data.get('additional_spaces', [])
         quantity = pricing_data.get('quantity')
-        base_volume = PROPERTY_VOLUMES['house'].get(house_size, 0)
-        for space in additional_spaces:
-            base_volume += ADDITIONAL_SPACES.get(space, 0)
-        multiplier = QUANTITY_MULTIPLIERS.get(quantity, 1.0)
+        base_volume = property_volumes['house'].get(house_size, 0)
+        for space in add_spaces:
+            base_volume += additional_spaces.get(space, 0)
+        multiplier = quantity_multipliers.get(quantity, 1.0)
         total_volume = base_volume * multiplier
         
     elif property_type == 'flat':
         flat_size = pricing_data.get('flat_size')
         quantity = pricing_data.get('quantity')
-        base_volume = PROPERTY_VOLUMES['flat'].get(flat_size, 0)
-        multiplier = QUANTITY_MULTIPLIERS.get(quantity, 1.0)
+        base_volume = property_volumes['flat'].get(flat_size, 0)
+        multiplier = quantity_multipliers.get(quantity, 1.0)
         total_volume = base_volume * multiplier
         
     elif property_type == 'office':
         office_size = pricing_data.get('office_size')
         quantity = pricing_data.get('quantity')
-        base_volume = PROPERTY_VOLUMES['office'].get(office_size, 0)
-        multiplier = QUANTITY_MULTIPLIERS.get(quantity, 1.0)
+        base_volume = property_volumes['office'].get(office_size, 0)
+        multiplier = quantity_multipliers.get(quantity, 1.0)
         total_volume = base_volume * multiplier
     
     return round(total_volume, 2)
@@ -1322,14 +1375,14 @@ def search_companies_by_pincode(pincode=None, property_type=None, property_size=
             # Add subscription info
             plan = company.get('subscription_plan', 'Free')
             viewed = int(company.get('requests_viewed_this_month', 0) or 0)
-            limit = PLAN_LIMITS.get(plan, 5)
+            # limit = PLAN_LIMITS.get(plan, 5)
             
-            company['subscription_info'] = {
-                'plan': plan,
-                'views_used': viewed,
-                'views_limit': limit if limit != -1 else 'Unlimited',
-                'views_remaining': (limit - viewed) if limit != -1 else 'Unlimited'
-            }
+            # company['subscription_info'] = {
+            #     'plan': plan,
+            #     'views_used': viewed,
+            #     'views_limit': limit if limit != -1 else 'Unlimited',
+            #     'views_remaining': (limit - viewed) if limit != -1 else 'Unlimited'
+            # }
             
             available_companies.append(company)
         
@@ -1520,963 +1573,14 @@ def get_all_companies():
         return {"success": False, "message": f"Failed to fetch companies: {str(e)}"}
     
 
-# @frappe.whitelist(allow_guest=True)
-# def search_companies_with_cost(pincode=None, selected_items=None, distance_miles=None):
-#     """
-#     Search logistics companies by pincode and calculate approximate costs
-    
-#     Args:
-#         pincode: Search pincode
-#         selected_items: JSON object with item names and quantities 
-#                        e.g., {"Single Bed": 2, "Wardrobe Double": 1}
-#         distance_miles: Distance in miles for the move
-    
-#     Returns:
-#         Companies with calculated costs for each
-#     """
-#     try:
-#         data = get_request_data()
-#         pincode = pincode or data.get("pincode")
-#         selected_items = selected_items or data.get("selected_items")
-#         distance_miles = distance_miles or data.get("distance_miles", 0)
-        
-#         if not pincode:
-#             frappe.local.response['http_status_code'] = 400
-#             return {"success": False, "message": "Pincode is required"}
-        
-#         # Parse selected items
-#         if isinstance(selected_items, str):
-#             selected_items = json.loads(selected_items)
-        
-#         if not selected_items:
-#             selected_items = {}
-        
-#         # Calculate total volume from inventory
-#         total_volume_m3 = 0
-#         total_boxes = 0
-#         item_details = []
-        
-#         if selected_items:
-#             for item_name, quantity in selected_items.items():
-#                 try:
-#                     # Get item from inventory
-#                     item = frappe.get_doc("Moving Inventory Item", item_name)
-#                     volume = item.average_volume * int(quantity)
-#                     total_volume_m3 += volume
-                    
-#                     # Count boxes (items with "Boxes" in name)
-#                     if "box" in item_name.lower():
-#                         total_boxes += int(quantity)
-                    
-#                     item_details.append({
-#                         "item_name": item_name,
-#                         "quantity": quantity,
-#                         "volume_per_item": item.average_volume,
-#                         "total_volume": round(volume, 2)
-#                     })
-#                 except Exception as e:
-#                     frappe.log_error(f"Item not found: {item_name}", "Search Cost Calculation")
-        
-#         # Search companies by pincode
-#         companies = frappe.db.sql("""
-#             SELECT * 
-#             FROM `tabLogistics Company`
-#             WHERE is_active = 1 
-#             AND (
-#                 pincode = %(pincode)s 
-#                 OR areas_covered LIKE %(pincode_pattern)s
-#             )
-#             ORDER BY created_at DESC
-#         """, {
-#             "pincode": pincode,
-#             "pincode_pattern": f'%{pincode}%'
-#         }, as_dict=True)
-        
-#         # Calculate costs for each company
-#         for company in companies:
-#             # Parse JSON fields
-#             parse_json_fields(company)
-            
-#             # Get company pricing
-#             loading_cost_per_m3 = float(company.get('loading_cost_per_m3', 0) or 0)
-#             packing_cost_per_box = float(company.get('packing_cost_per_box', 0) or 0)
-#             disassembly_cost_per_item = float(company.get('disassembly_cost_per_item', 0) or 0)
-#             assembly_cost_per_item = float(company.get('assembly_cost_per_item', 0) or 0)
-#             cost_per_mile_under_25 = float(company.get('cost_per_mile_under_25', 0) or 0)
-#             cost_per_mile_over_25 = float(company.get('cost_per_mile_over_25', 0) or 0)
-            
-#             # Calculate component costs
-#             loading_cost = total_volume_m3 * loading_cost_per_m3
-#             packing_cost = total_boxes * packing_cost_per_box
-            
-#             # Count items needing assembly/disassembly (exclude boxes)
-#             assembly_items = sum(
-#                 int(qty) for name, qty in selected_items.items() 
-#                 if "box" not in name.lower()
-#             )
-#             disassembly_cost = assembly_items * disassembly_cost_per_item
-#             assembly_cost = assembly_items * assembly_cost_per_item
-            
-#             # Calculate distance cost
-#             distance_miles = float(distance_miles or 0)
-#             if distance_miles <= 25:
-#                 distance_cost = distance_miles * cost_per_mile_under_25
-#             else:
-#                 distance_cost = (25 * cost_per_mile_under_25) + \
-#                                ((distance_miles - 25) * cost_per_mile_over_25)
-            
-#             # Fixed content insurance (you can make this configurable)
-#             content_insurance = 2000  # £2,000 fixed as shown in your UI
-            
-#             # Total cost
-#             total_cost = (
-#                 loading_cost + 
-#                 packing_cost + 
-#                 disassembly_cost + 
-#                 assembly_cost + 
-#                 distance_cost
-#             )
-            
-#             # Add cost breakdown to company data
-#             company['cost_calculation'] = {
-#                 'total_volume_m3': round(total_volume_m3, 2),
-#                 'total_boxes': total_boxes,
-#                 'assembly_items': assembly_items,
-#                 'distance_miles': distance_miles,
-                
-#                 'loading_cost': round(loading_cost, 2),
-#                 'packing_cost': round(packing_cost, 2),
-#                 'disassembly_cost': round(disassembly_cost, 2),
-#                 'assembly_cost': round(assembly_cost, 2),
-#                 'distance_cost': round(distance_cost, 2),
-#                 'content_insurance': content_insurance,
-                
-#                 'removal_price': round(disassembly_cost, 2),  # Disassembly cost
-#                 'add_packing': round(packing_cost, 2),        # Packing cost
-#                 'total_cost': round(total_cost, 2),           # Total without insurance
-#                 'total_with_insurance': round(total_cost, 2)  # Insurance shown separately
-#             }
-            
-#             # Add pricing rates for reference
-#             company['pricing_rates'] = {
-#                 'loading_per_m3': loading_cost_per_m3,
-#                 'packing_per_box': packing_cost_per_box,
-#                 'disassembly_per_item': disassembly_cost_per_item,
-#                 'assembly_per_item': assembly_cost_per_item,
-#                 'cost_per_mile_under_25': cost_per_mile_under_25,
-#                 'cost_per_mile_over_25': cost_per_mile_over_25
-#             }
-        
-#         return {
-#             "success": True,
-#             "count": len(companies),
-#             "data": companies,
-#             "search_parameters": {
-#                 "pincode": pincode,
-#                 "total_volume_m3": round(total_volume_m3, 2),
-#                 "total_boxes": total_boxes,
-#                 "assembly_items": assembly_items,
-#                 "distance_miles": distance_miles,
-#                 "item_details": item_details
-#             }
-#         }
-    
-#     except Exception as e:
-#         frappe.log_error(f"Search with Cost Error: {str(e)}", "Search Cost Calculation")
-#         frappe.local.response['http_status_code'] = 500
-#         return {"success": False, "message": f"Failed to search companies: {str(e)}"}
-
-
-# @frappe.whitelist(allow_guest=True)
-# def search_companies_with_cost(pincode=None, selected_items=None, distance_miles=None):
-#     """
-#     Search logistics companies by pincode and calculate costs with detailed box requirements
-#     Only shows companies with available request views
-    
-#     Args:
-#         pincode: Search pincode
-#         selected_items: JSON object with item names and quantities 
-#                        e.g., {"Single Bed": 2, "Wardrobe Double": 1}
-#         distance_miles: Distance in miles for the move
-    
-#     Returns:
-#         Companies with calculated costs including category-wise box breakdown
-#     """
-#     try:
-#         data = get_request_data()
-#         pincode = pincode or data.get("pincode")
-#         selected_items = selected_items or data.get("selected_items")
-#         distance_miles = distance_miles or data.get("distance_miles", 0)
-        
-#         if not pincode:
-#             frappe.local.response['http_status_code'] = 400
-#             return {"success": False, "message": "Pincode is required"}
-        
-#         # Parse selected items
-#         if isinstance(selected_items, str):
-#             selected_items = json.loads(selected_items)
-        
-#         if not selected_items:
-#             selected_items = {}
-        
-#         # Box packing standards (items per box by category)
-#         BOX_PACKING_STANDARDS = {
-#             # Small items: ~5-8 items per box
-#             "ornaments": 8,
-#             "fragile": 6,
-#             "kitchen_small": 10,
-#             "bathroom_small": 10,
-            
-#             # Medium items: ~2-4 items per box
-#             "books": 15,  # Books are heavy
-#             "clothes": 20,  # Clothes per wardrobe section
-#             "bedding": 5,
-#             "kitchenware": 8,
-            
-#             # Default fallback
-#             "default_small": 8,
-#             "default_medium": 4
-#         }
-        
-#         # Box volume capacity (standard moving boxes)
-#         STANDARD_BOX_VOLUME = 0.07  # m³ (approximately 1.5 cubic feet)
-        
-#         # Calculate volume and boxes by category
-#         category_breakdown = {}
-#         total_volume_m3 = 0
-#         total_boxes_needed = 0
-#         item_details = []
-#         assembly_items_count = 0
-        
-#         if selected_items:
-#             for item_name, quantity in selected_items.items():
-#                 try:
-#                     # Get item from inventory
-#                     item = frappe.get_doc("Moving Inventory Item", item_name)
-#                     category = item.category
-#                     volume_per_item = item.average_volume
-#                     total_item_volume = volume_per_item * int(quantity)
-#                     total_volume_m3 += total_item_volume
-                    
-#                     # Initialize category if not exists
-#                     if category not in category_breakdown:
-#                         category_breakdown[category] = {
-#                             "items": [],
-#                             "total_volume": 0,
-#                             "boxes_needed": 0,
-#                             "item_count": 0
-#                         }
-                    
-#                     # Determine if item needs boxes (small/medium items vs furniture)
-#                     needs_boxing = determine_if_needs_boxing(item_name, volume_per_item)
-                    
-#                     # Calculate boxes for this item
-#                     item_boxes = 0
-#                     if needs_boxing:
-#                         # Small items that fit in boxes
-#                         item_boxes = calculate_boxes_for_item(
-#                             item_name, 
-#                             int(quantity), 
-#                             volume_per_item,
-#                             STANDARD_BOX_VOLUME
-#                         )
-#                         category_breakdown[category]["boxes_needed"] += item_boxes
-#                         total_boxes_needed += item_boxes
-#                     else:
-#                         # Large furniture items don't need boxes but need assembly
-#                         if not is_box_item(item_name):
-#                             assembly_items_count += int(quantity)
-                    
-#                     # Update category data
-#                     category_breakdown[category]["items"].append({
-#                         "item_name": item_name,
-#                         "quantity": quantity,
-#                         "volume_per_item": volume_per_item,
-#                         "total_volume": round(total_item_volume, 2),
-#                         "needs_boxing": needs_boxing,
-#                         "boxes_for_item": item_boxes
-#                     })
-#                     category_breakdown[category]["total_volume"] += total_item_volume
-#                     category_breakdown[category]["item_count"] += int(quantity)
-                    
-#                     # Add to item details
-#                     item_details.append({
-#                         "item_name": item_name,
-#                         "category": category,
-#                         "quantity": quantity,
-#                         "volume_per_item": volume_per_item,
-#                         "total_volume": round(total_item_volume, 2),
-#                         "needs_boxing": needs_boxing,
-#                         "boxes_needed": item_boxes
-#                     })
-                    
-#                 except Exception as e:
-#                     frappe.log_error(f"Item not found: {item_name} - {str(e)}", "Search Cost Calculation")
-        
-#         # Round category volumes
-#         for category in category_breakdown:
-#             category_breakdown[category]["total_volume"] = round(
-#                 category_breakdown[category]["total_volume"], 2
-#             )
-        
-#         # Search companies by pincode
-#         companies = frappe.db.sql("""
-#             SELECT * 
-#             FROM `tabLogistics Company`
-#             WHERE is_active = 1 
-#             AND (
-#                 pincode = %(pincode)s 
-#                 OR areas_covered LIKE %(pincode_pattern)s
-#             )
-#             ORDER BY created_at DESC
-#         """, {
-#             "pincode": pincode,
-#             "pincode_pattern": f'%{pincode}%'
-#         }, as_dict=True)
-        
-#         # Filter and calculate costs for available companies
-#         available_companies = []
-        
-#         for company in companies:
-#             # Check subscription limit FIRST
-#             if not check_company_can_view_requests(company):
-#                 continue
-            
-#             # Parse JSON fields
-#             parse_json_fields(company)
-            
-#             # Get company pricing
-#             loading_cost_per_m3 = float(company.get('loading_cost_per_m3', 0) or 0)
-#             packing_cost_per_box = float(company.get('packing_cost_per_box', 0) or 0)
-#             disassembly_cost_per_item = float(company.get('disassembly_cost_per_item', 0) or 0)
-#             assembly_cost_per_item = float(company.get('assembly_cost_per_item', 0) or 0)
-#             cost_per_mile_under_25 = float(company.get('cost_per_mile_under_25', 0) or 0)
-#             cost_per_mile_over_25 = float(company.get('cost_per_mile_over_25', 0) or 0)
-            
-#             # Calculate component costs
-#             loading_cost = total_volume_m3 * loading_cost_per_m3
-            
-#             # ACCURATE PACKING COST based on actual boxes needed
-#             packing_cost = total_boxes_needed * packing_cost_per_box
-            
-#             # Assembly costs (only for furniture, not boxes)
-#             disassembly_cost = assembly_items_count * disassembly_cost_per_item
-#             assembly_cost = assembly_items_count * assembly_cost_per_item
-            
-#             # Calculate distance cost
-#             distance_miles = float(distance_miles or 0)
-#             if distance_miles <= 25:
-#                 distance_cost = distance_miles * cost_per_mile_under_25
-#             else:
-#                 distance_cost = (25 * cost_per_mile_under_25) + \
-#                                ((distance_miles - 25) * cost_per_mile_over_25)
-            
-#             # Fixed content insurance
-#             content_insurance = 2000
-            
-#             # Total cost
-#             total_cost = (
-#                 loading_cost + 
-#                 packing_cost + 
-#                 disassembly_cost + 
-#                 assembly_cost + 
-#                 distance_cost
-#             )
-            
-#             # Add cost breakdown to company data
-#             company['cost_calculation'] = {
-#                 'total_volume_m3': round(total_volume_m3, 2),
-#                 'total_boxes_needed': total_boxes_needed,
-#                 'assembly_items': assembly_items_count,
-#                 'distance_miles': distance_miles,
-                
-#                 'loading_cost': round(loading_cost, 2),
-#                 'packing_cost': round(packing_cost, 2),
-#                 'disassembly_cost': round(disassembly_cost, 2),
-#                 'assembly_cost': round(assembly_cost, 2),
-#                 'distance_cost': round(distance_cost, 2),
-#                 'content_insurance': content_insurance,
-                
-#                 'removal_price': round(disassembly_cost, 2),
-#                 'add_packing': round(packing_cost, 2),
-#                 'total_cost': round(total_cost, 2),
-#                 'total_with_insurance': round(total_cost, 2),
-                
-#                 # Category-wise breakdown
-#                 'category_breakdown': category_breakdown
-#             }
-            
-#             # Add pricing rates
-#             company['pricing_rates'] = {
-#                 'loading_per_m3': loading_cost_per_m3,
-#                 'packing_per_box': packing_cost_per_box,
-#                 'disassembly_per_item': disassembly_cost_per_item,
-#                 'assembly_per_item': assembly_cost_per_item,
-#                 'cost_per_mile_under_25': cost_per_mile_under_25,
-#                 'cost_per_mile_over_25': cost_per_mile_over_25
-#             }
-            
-#             # Add subscription info
-#             plan = company.get('subscription_plan', 'Free')
-#             viewed = int(company.get('requests_viewed_this_month', 0) or 0)
-#             limit = PLAN_LIMITS.get(plan, 5)
-            
-#             company['subscription_info'] = {
-#                 'plan': plan,
-#                 'views_used': viewed,
-#                 'views_limit': limit if limit != -1 else 'Unlimited',
-#                 'views_remaining': (limit - viewed) if limit != -1 else 'Unlimited'
-#             }
-            
-#             available_companies.append(company)
-        
-#         return {
-#             "success": True,
-#             "count": len(available_companies),
-#             "total_companies": len(companies),
-#             "filtered_out": len(companies) - len(available_companies),
-#             "data": available_companies,
-#             "search_parameters": {
-#                 "pincode": pincode,
-#                 "total_volume_m3": round(total_volume_m3, 2),
-#                 "total_boxes_needed": total_boxes_needed,
-#                 "assembly_items": assembly_items_count,
-#                 "distance_miles": distance_miles,
-#                 "item_details": item_details,
-#                 "category_breakdown": category_breakdown
-#             },
-#             "packing_summary": {
-#                 "standard_box_volume": STANDARD_BOX_VOLUME,
-#                 "total_boxes_needed": total_boxes_needed,
-#                 "categories_requiring_boxes": len([c for c in category_breakdown.values() if c["boxes_needed"] > 0])
-#             }
-#         }
-    
-#     except Exception as e:
-#         frappe.log_error(f"Search with Cost Error: {str(e)}", "Search Cost Calculation")
-#         frappe.local.response['http_status_code'] = 500
-#         return {"success": False, "message": f"Failed to search companies: {str(e)}"}
-
 
 """
-Add this helper function before search_companies_with_cost
+CORRECTED search_companies_with_cost
+Aligned with request_pricing.py spreadsheet formula
 """
 
-def auto_calculate_volumes(selected_items, dismantle_items):
-    """
-    Automatically calculate packing, dismantling, and reassembly volumes
-    
-    Args:
-        selected_items: Dict of item names and quantities
-        dismantle_items: Dict of item names marked for dismantling
-    
-    Returns:
-        dict with packing_volume_m3, dismantling_volume_m3, reassembly_volume_m3
-    """
-    # Items that ALWAYS need packing (small/fragile items)
-    ALWAYS_PACK_KEYWORDS = [
-        'ornaments', 'fragile', 'plant', 'suitcase', 'boxes',
-        'kitchen bin', 'general', 'garden tools', 'shelves contents',
-        'misc', 'other', 'accessories', 'decorations'
-    ]
-    
-    # Items that NEVER need packing (large furniture/appliances)
-    NEVER_PACK_KEYWORDS = [
-        'bed', 'mattress', 'sofa', 'wardrobe', 'table', 'chair',
-        'desk', 'cabinet', 'bookcase', 'chest', 'drawers',
-        'fridge', 'freezer', 'washing', 'dishwasher', 'cooker',
-        'tv', 'stand', 'sideboard', 'cot', 'bunk'
-    ]
-    
-    # Small threshold: items under this volume (m³) need packing
-    SMALL_ITEM_THRESHOLD = 0.5  # Items smaller than 0.5m³ typically need packing
-    
-    packing_volume = 0
-    dismantling_volume = 0
-    reassembly_volume = 0
-    
-    for item_name, quantity in selected_items.items():
-        try:
-            # Get item from inventory
-            item = frappe.get_doc("Moving Inventory Item", item_name)
-            volume_per_item = item.average_volume
-            total_item_volume = volume_per_item * int(quantity)
-            
-            item_name_lower = item_name.lower()
-            
-            # ========== 1. PACKING VOLUME ==========
-            needs_packing = False
-            
-            # First check: Does it ALWAYS need packing? (small items)
-            for keyword in ALWAYS_PACK_KEYWORDS:
-                if keyword in item_name_lower:
-                    needs_packing = True
-                    break
-            
-            # Second check: Is it large furniture that NEVER needs packing?
-            is_large_furniture = False
-            for keyword in NEVER_PACK_KEYWORDS:
-                if keyword in item_name_lower:
-                    is_large_furniture = True
-                    break
-            
-            # If not explicitly categorized, use volume threshold
-            if not needs_packing and not is_large_furniture:
-                if volume_per_item < SMALL_ITEM_THRESHOLD:
-                    needs_packing = True
-            
-            # Override: large furniture never gets packed
-            if is_large_furniture:
-                needs_packing = False
-            
-            # Add to packing volume if needed
-            if needs_packing:
-                packing_volume += total_item_volume
-            
-            # ========== 2. DISMANTLING VOLUME ==========
-            # Check if item is marked for dismantling
-            if dismantle_items.get(item_name, False):
-                dismantling_volume += total_item_volume
-                # If dismantled, it will also need reassembly
-                reassembly_volume += total_item_volume
-            
-        except Exception as e:
-            frappe.log_error(f"Volume calculation error for {item_name}: {str(e)}", 
-                           "Auto Calculate Volumes")
-            continue
-    
-    return {
-        'packing_volume_m3': round(packing_volume, 2),
-        'dismantling_volume_m3': round(dismantling_volume, 2),
-        'reassembly_volume_m3': round(reassembly_volume, 2)
-    }
-
-
-# @frappe.whitelist(allow_guest=True)
-# def search_companies_with_cost(
-#     pincode=None, 
-#     selected_items=None, 
-#     dismantle_items=None,
-#     distance_miles=None,
-#     # Pricing data
-#     property_type=None,
-#     property_size=None,
-#     additional_spaces=None,
-#     quantity=None,
-#     # Optional extras flags - NOW AUTO-CALCULATED
-#     include_packing=True,  # Changed default to True
-#     packing_volume_m3=None,  # Will be auto-calculated if None
-#     include_dismantling=True,  # Changed default to True
-#     dismantling_volume_m3=None,  # Will be auto-calculated if None
-#     include_reassembly=True,  # Changed default to True
-#     reassembly_volume_m3=None,  # Will be auto-calculated if None
-#     # Collection assessment
-#     collection_parking=None,
-#     collection_parking_distance=None,
-#     collection_internal_access=None,
-#     collection_property_type=None,
-#     # Delivery assessment
-#     delivery_parking=None,
-#     delivery_parking_distance=None,
-#     delivery_internal_access=None,
-#     delivery_property_type=None,
-#     # Move date data
-#     notice_period=None,
-#     move_day=None,
-#     collection_time=None,
-#     # Email
-#     user_email=None,
-#     send_email=False
-# ):
-#     """
-#     Search companies with EXACT calculated pricing
-#     NOW AUTO-CALCULATES: packing, dismantling, and reassembly volumes
-#     """
-#     try:
-#         data = get_request_data()
-        
-#         # Extract all parameters
-#         pincode = pincode or data.get("pincode")
-#         selected_items = selected_items or data.get("selected_items")
-#         dismantle_items = dismantle_items or data.get("dismantle_items")
-#         distance_miles = distance_miles or data.get("distance_miles", 0)
-        
-#         # Pricing data
-#         property_type = property_type or data.get("property_type")
-#         property_size = property_size or data.get("property_size")
-#         additional_spaces = additional_spaces or data.get("additional_spaces", [])
-#         quantity = quantity or data.get("quantity", "everything")
-        
-#         # Optional extras - defaults changed to True
-#         include_packing = data.get("include_packing", True) if "include_packing" in data else True
-#         include_dismantling = data.get("include_dismantling", True) if "include_dismantling" in data else True
-#         include_reassembly = data.get("include_reassembly", True) if "include_reassembly" in data else True
-        
-#         # Collection assessment
-#         collection_parking = collection_parking or data.get("collection_parking", "driveway")
-#         collection_parking_distance = collection_parking_distance or data.get("collection_parking_distance", "less_than_5m")
-#         collection_internal_access = collection_internal_access or data.get("collection_internal_access", "ground_first")
-        
-#         # Delivery assessment
-#         delivery_parking = delivery_parking or data.get("delivery_parking", "driveway")
-#         delivery_parking_distance = delivery_parking_distance or data.get("delivery_parking_distance", "less_than_5m")
-#         delivery_internal_access = delivery_internal_access or data.get("delivery_internal_access", "ground_first")
-        
-#         # Move date data
-#         notice_period = notice_period or data.get("notice_period", "within_month")
-#         move_day = move_day or data.get("move_day", "sun_to_thurs")
-#         collection_time = collection_time or data.get("collection_time", "flexible")
-        
-#         # Email
-#         user_email = user_email or data.get("user_email")
-#         send_email = send_email or data.get("send_email", False)
-        
-#         if not pincode:
-#             frappe.local.response['http_status_code'] = 400
-#             return {"success": False, "message": "Pincode is required"}
-        
-#         # Parse selected items and dismantle items
-#         if isinstance(selected_items, str):
-#             selected_items = json.loads(selected_items)
-#         if isinstance(dismantle_items, str):
-#             dismantle_items = json.loads(dismantle_items)
-#         if isinstance(additional_spaces, str):
-#             additional_spaces = json.loads(additional_spaces)
-        
-#         selected_items = selected_items or {}
-#         dismantle_items = dismantle_items or {}
-#         additional_spaces = additional_spaces or []
-        
-#         # ========== AUTO-CALCULATE VOLUMES ==========
-#         auto_volumes = auto_calculate_volumes(selected_items, dismantle_items)
-        
-#         # Use auto-calculated values if not provided
-#         if packing_volume_m3 is None or packing_volume_m3 == 0:
-#             packing_volume_m3 = auto_volumes['packing_volume_m3']
-#         else:
-#             packing_volume_m3 = float(packing_volume_m3)
-            
-#         if dismantling_volume_m3 is None or dismantling_volume_m3 == 0:
-#             dismantling_volume_m3 = auto_volumes['dismantling_volume_m3']
-#         else:
-#             dismantling_volume_m3 = float(dismantling_volume_m3)
-            
-#         if reassembly_volume_m3 is None or reassembly_volume_m3 == 0:
-#             reassembly_volume_m3 = auto_volumes['reassembly_volume_m3']
-#         else:
-#             reassembly_volume_m3 = float(reassembly_volume_m3)
-        
-#         # Log calculated volumes for debugging
-#         frappe.log_error(
-#             f"Auto-calculated volumes:\nPacking: {packing_volume_m3}m³\n"
-#             f"Dismantling: {dismantling_volume_m3}m³\nReassembly: {reassembly_volume_m3}m³",
-#             "Volume Auto-Calculation"
-#         )
-        
-#         # Get user email from token if not provided
-#         if send_email and not user_email:
-#             try:
-#                 user_info = get_user_from_token()
-#                 user_email = user_info.get('email')
-#             except:
-#                 user_email = None
-        
-#         # Calculate total volume from inventory
-#         total_volume_m3 = 0
-#         item_details = []
-        
-#         if selected_items:
-#             for item_name, quantity_val in selected_items.items():
-#                 try:
-#                     item = frappe.get_doc("Moving Inventory Item", item_name)
-#                     volume = item.average_volume * int(quantity_val)
-#                     total_volume_m3 += volume
-                    
-#                     item_details.append({
-#                         "item_name": item_name,
-#                         "quantity": quantity_val,
-#                         "volume_per_item": item.average_volume,
-#                         "total_volume": round(volume, 2),
-#                         "needs_dismantling": dismantle_items.get(item_name, False)
-#                     })
-#                 except Exception as e:
-#                     frappe.log_error(f"Item not found: {item_name}", "Search Cost Calculation")
-        
-#         # If no items, calculate from property type
-#         if total_volume_m3 == 0 and property_type:
-#             total_volume_m3 = calculate_total_volume({
-#                 'property_type': property_type,
-#                 'house_size': property_size if property_type == 'house' else None,
-#                 'flat_size': property_size if property_type == 'flat' else None,
-#                 'office_size': property_size if property_type == 'office' else None,
-#                 'vehicle_type': property_size if property_type == 'a_few_items' else None,
-#                 'additional_spaces': additional_spaces,
-#                 'quantity': quantity
-#             })
-        
-#         # Search companies by pincode
-#         companies = frappe.db.sql("""
-#             SELECT * 
-#             FROM `tabLogistics Company`
-#             WHERE is_active = 1 
-#             AND (
-#                 pincode = %(pincode)s 
-#                 OR areas_covered LIKE %(pincode_pattern)s
-#             )
-#             ORDER BY created_at DESC
-#         """, {
-#             "pincode": pincode,
-#             "pincode_pattern": f'%{pincode}%'
-#         }, as_dict=True)
-        
-#         # Filter and calculate costs for available companies
-#         available_companies = []
-        
-#         for company in companies:
-#             # Check subscription limit
-#             if not check_company_can_view_requests(company):
-#                 continue
-            
-#             # Parse JSON fields
-#             parse_json_fields(company)
-            
-#             # Get company rates
-#             company_rates = {
-#                 'loading_cost_per_m3': float(company.get('loading_cost_per_m3', 0) or 35.00),
-#                 'packing_cost_per_m3': float(company.get('packing_cost_per_box', 0) or 12.25),
-#                 'disassembly_cost_per_m3': float(company.get('disassembly_cost_per_item', 0) or 25.00),
-#                 'assembly_cost_per_m3': float(company.get('assembly_cost_per_item', 0) or 50.00),
-#                 'cost_per_mile_under_100': float(company.get('cost_per_mile_under_25', 0) or 0.25),
-#                 'cost_per_mile_over_100': float(company.get('cost_per_mile_over_25', 0) or 0.15),
-#             }
-            
-#             # ========== Property Assessment Multipliers ==========
-#             collection_multiplier = 1.0
-#             parking_dist_map = {
-#                 'less_than_5m': 1.0,
-#                 '5_to_10m': 1.0,
-#                 '10_to_15m': 1.05,
-#                 '15_to_20m': 1.05,
-#                 'over_20m': 1.1
-#             }
-#             collection_multiplier *= parking_dist_map.get(collection_parking_distance, 1.0)
-            
-#             if property_type in ['house', 'bungalow', 'town_house']:
-#                 access_map = {
-#                     'ground_only': 1.0,
-#                     'ground_first': 1.0,
-#                     'ground_first_second': 1.025
-#                 }
-#                 collection_multiplier *= access_map.get(collection_internal_access, 1.0)
-#             else:
-#                 if 'lift' in collection_internal_access.lower():
-#                     collection_multiplier *= 1.1
-#                 elif 'stairs' in collection_internal_access.lower():
-#                     collection_multiplier *= 1.05
-                
-#                 floor_map = {
-#                     'ground_floor': 1.0,
-#                     'first_floor': 1.1,
-#                     'second_floor': 1.15,
-#                     'third_floor_plus': 1.2
-#                 }
-#                 collection_multiplier *= floor_map.get(collection_internal_access, 1.0)
-            
-#             delivery_multiplier = 1.0
-#             delivery_multiplier *= parking_dist_map.get(delivery_parking_distance, 1.0)
-            
-#             if property_type in ['house', 'bungalow', 'town_house']:
-#                 access_map = {
-#                     'ground_only': 1.0,
-#                     'ground_first': 1.0,
-#                     'ground_first_second': 1.025
-#                 }
-#                 delivery_multiplier *= access_map.get(delivery_internal_access, 1.0)
-#             else:
-#                 if 'lift' in delivery_internal_access.lower():
-#                     delivery_multiplier *= 1.1
-#                 elif 'stairs' in delivery_internal_access.lower():
-#                     delivery_multiplier *= 1.05
-                
-#                 floor_map = {
-#                     'ground_floor': 1.0,
-#                     'first_floor': 1.1,
-#                     'second_floor': 1.15,
-#                     'third_floor_plus': 1.2
-#                 }
-#                 delivery_multiplier *= floor_map.get(delivery_internal_access, 1.0)
-            
-#             combined_property_multiplier = (collection_multiplier + delivery_multiplier) / 2
-            
-#             # ========== Calculate Costs ==========
-#             loading_cost = total_volume_m3 * company_rates['loading_cost_per_m3'] * combined_property_multiplier
-            
-#             distance = float(distance_miles or 0)
-#             if distance <= 100:
-#                 mileage_cost = distance * total_volume_m3 * company_rates['cost_per_mile_under_100']
-#             else:
-#                 cost_first_100 = 100 * total_volume_m3 * company_rates['cost_per_mile_under_100']
-#                 remaining_miles = distance - 100
-#                 cost_remaining = remaining_miles * total_volume_m3 * company_rates['cost_per_mile_over_100']
-#                 mileageF_cost = cost_first_100 + cost_remaining
-            
-#             # Optional extras - NOW USING AUTO-CALCULATED VOLUMES
-#             packing_cost = 0
-#             if include_packing and packing_volume_m3 > 0:
-#                 packing_cost = packing_volume_m3 * company_rates['packing_cost_per_m3']
-            
-#             dismantling_cost = 0
-#             if include_dismantling and dismantling_volume_m3 > 0:
-#                 dismantling_cost = dismantling_volume_m3 * company_rates['disassembly_cost_per_m3']
-            
-#             reassembly_cost = 0
-#             if include_reassembly and reassembly_volume_m3 > 0:
-#                 reassembly_cost = reassembly_volume_m3 * company_rates['assembly_cost_per_m3']
-            
-#             subtotal = loading_cost + mileage_cost + packing_cost + dismantling_cost + reassembly_cost
-            
-#             # Move date multipliers
-#             notice_map = {
-#                 'flexible': 0.8,
-#                 'within_3_days': 1.3,
-#                 'within_week': 1.2,
-#                 'within_2_weeks': 1.1,
-#                 'within_month': 1.0,
-#                 'over_month': 0.9
-#             }
-#             notice_multiplier = notice_map.get(notice_period, 1.0)
-            
-#             day_map = {
-#                 'sun_to_thurs': 1.0,
-#                 'fri_sat': 1.15,
-#                 'friday_saturday': 1.15
-#             }
-#             day_multiplier = day_map.get(move_day, 1.0)
-            
-#             time_multiplier = 1.0
-#             move_date_multiplier = notice_multiplier * day_multiplier * time_multiplier
-            
-#             final_total = subtotal * move_date_multiplier
-#             date_adjustment = final_total - subtotal
-            
-#             # Add detailed cost breakdown
-#             company['exact_pricing'] = {
-#                 'total_volume_m3': round(total_volume_m3, 2),
-#                 'distance_miles': distance,
-                
-#                 # AUTO-CALCULATED VOLUMES
-#                 'auto_calculated_volumes': {
-#                     'packing_volume_m3': round(packing_volume_m3, 2),
-#                     'dismantling_volume_m3': round(dismantling_volume_m3, 2),
-#                     'reassembly_volume_m3': round(reassembly_volume_m3, 2)
-#                 },
-                
-#                 'collection_multiplier': round(collection_multiplier, 3),
-#                 'delivery_multiplier': round(delivery_multiplier, 3),
-#                 'combined_property_multiplier': round(combined_property_multiplier, 3),
-                
-#                 'loading_cost': round(loading_cost, 2),
-#                 'mileage_cost': round(mileage_cost, 2),
-                
-#                 'packing_cost': round(packing_cost, 2),
-#                 'dismantling_cost': round(dismantling_cost, 2),
-#                 'reassembly_cost': round(reassembly_cost, 2),
-                
-#                 'subtotal_before_date': round(subtotal, 2),
-#                 'move_date_multiplier': round(move_date_multiplier, 3),
-#                 'date_adjustment': round(date_adjustment, 2),
-                
-#                 'final_total': round(final_total, 2),
-                
-#                 'breakdown': {
-#                     'loading': round(loading_cost, 2),
-#                     'mileage': round(mileage_cost, 2),
-#                     'packing': round(packing_cost, 2),
-#                     'dismantling': round(dismantling_cost, 2),
-#                     'reassembly': round(reassembly_cost, 2),
-#                     'date_adjustment': round(date_adjustment, 2)
-#                 },
-                
-#                 'multipliers': {
-#                     'notice_period': notice_multiplier,
-#                     'move_day': day_multiplier,
-#                     'collection_time': time_multiplier,
-#                     'property_collection': round(collection_multiplier, 3),
-#                     'property_delivery': round(delivery_multiplier, 3)
-#                 }
-#             }
-            
-#             company['pricing_rates'] = company_rates
-            
-#             plan = company.get('subscription_plan', 'Free')
-#             viewed = int(company.get('requests_viewed_this_month', 0) or 0)
-#             limit = PLAN_LIMITS.get(plan, 5)
-            
-#             company['subscription_info'] = {
-#                 'plan': plan,
-#                 'views_used': viewed,
-#                 'views_limit': limit if limit != -1 else 'Unlimited',
-#                 'views_remaining': (limit - viewed) if limit != -1 else 'Unlimited'
-#             }
-            
-#             available_companies.append(company)
-        
-#         available_companies.sort(key=lambda x: x['exact_pricing']['final_total'])
-        
-#         result = {
-#             "success": True,
-#             "count": len(available_companies),
-#             "total_companies": len(companies),
-#             "filtered_out": len(companies) - len(available_companies),
-#             "data": available_companies,
-#             "search_parameters": {
-#                 "pincode": pincode,
-#                 "property_type": property_type,
-#                 "property_size": property_size,
-#                 "total_volume_m3": round(total_volume_m3, 2),
-#                 "distance_miles": distance_miles,
-#                 "additional_spaces": additional_spaces,
-#                 "quantity": quantity,
-#                 "item_details": item_details,
-#                 "optional_extras": {
-#                     "packing": include_packing,
-#                     "dismantling": include_dismantling,
-#                     "reassembly": include_reassembly
-#                 },
-#                 "auto_calculated_volumes": {
-#                     "packing_volume_m3": round(packing_volume_m3, 2),
-#                     "dismantling_volume_m3": round(dismantling_volume_m3, 2),
-#                     "reassembly_volume_m3": round(reassembly_volume_m3, 2)
-#                 },
-#                 "move_date": {
-#                     "notice_period": notice_period,
-#                     "move_day": move_day,
-#                     "collection_time": collection_time
-#                 }
-#             },
-#             "pricing_note": "Volumes for packing, dismantling, and reassembly are auto-calculated based on selected items"
-#         }
-        
-#         # Send email if requested
-#         if send_email and user_email:
-#             try:
-#                 email_sent = send_property_search_email(
-#                     user_email=user_email,
-#                     search_data=result.get('search_parameters', {}),
-#                     companies_data=available_companies
-#                 )
-#                 result['email_sent'] = email_sent
-#             except Exception as email_error:
-#                 result['email_sent'] = False
-#                 result['email_message'] = f"Email failed: {str(email_error)}"
-        
-#         return result
-    
-#     except Exception as e:
-#         frappe.log_error(f"Search with Exact Cost Error: {str(e)}", "Exact Cost Calculation")
-#         frappe.local.response['http_status_code'] = 500
-#         return {"success": False, "message": f"Failed to search companies: {str(e)}"}
-
+# OPTIMIZED search_companies_with_cost - Fully Integrated with config_manager.py
+# This version uses config_manager for ALL constants instead of hardcoding
 
 @frappe.whitelist(allow_guest=True)
 def search_companies_with_cost(
@@ -2484,88 +1588,79 @@ def search_companies_with_cost(
     selected_items=None, 
     dismantle_items=None,
     distance_miles=None,
-    # Address fields - NEW
     pickup_address=None,
     pickup_city=None,
     delivery_address=None,
     delivery_city=None,
-    # Pricing data
     property_type=None,
     property_size=None,
     additional_spaces=None,
     quantity=None,
-    # Optional extras flags - NOW AUTO-CALCULATED
     include_packing=True,
-    packing_volume_m3=None,
     include_dismantling=True,
-    dismantling_volume_m3=None,
     include_reassembly=True,
-    reassembly_volume_m3=None,
-    # Collection assessment
     collection_parking=None,
     collection_parking_distance=None,
+    collection_house_type=None,
     collection_internal_access=None,
-    collection_property_type=None,
-    # Delivery assessment
+    collection_floor_level=None,
     delivery_parking=None,
     delivery_parking_distance=None,
+    delivery_house_type=None,
     delivery_internal_access=None,
-    delivery_property_type=None,
-    # Move date data
+    delivery_floor_level=None,
     notice_period=None,
     move_day=None,
     collection_time=None,
-    # Email
     user_email=None,
     send_email=False
 ):
     """
-    Search companies with EXACT calculated pricing
-    NOW AUTO-CALCULATES: packing, dismantling, and reassembly volumes
-    INCLUDES: pickup and delivery address fields
+    Search companies with EXACT pricing using config_manager.py
+    All constants are now dynamically loaded from System Configuration
     """
     try:
         data = get_request_data()
         
-        # Extract all parameters
+        # Extract parameters
         pincode = pincode or data.get("pincode")
         selected_items = selected_items or data.get("selected_items")
         dismantle_items = dismantle_items or data.get("dismantle_items")
         distance_miles = distance_miles or data.get("distance_miles", 0)
         
-        # Address fields - NEW
         pickup_address = pickup_address or data.get("pickup_address")
         pickup_city = pickup_city or data.get("pickup_city")
         delivery_address = delivery_address or data.get("delivery_address")
         delivery_city = delivery_city or data.get("delivery_city")
         
-        # Pricing data
         property_type = property_type or data.get("property_type")
         property_size = property_size or data.get("property_size")
         additional_spaces = additional_spaces or data.get("additional_spaces", [])
         quantity = quantity or data.get("quantity", "everything")
         
-        # Optional extras - defaults changed to True
         include_packing = data.get("include_packing", True) if "include_packing" in data else True
         include_dismantling = data.get("include_dismantling", True) if "include_dismantling" in data else True
         include_reassembly = data.get("include_reassembly", True) if "include_reassembly" in data else True
         
         # Collection assessment
         collection_parking = collection_parking or data.get("collection_parking", "driveway")
-        collection_parking_distance = collection_parking_distance or data.get("collection_parking_distance", "less_than_5m")
-        collection_internal_access = collection_internal_access or data.get("collection_internal_access", "ground_first")
+        collection_parking_distance = collection_parking_distance or data.get("collection_parking_distance", "less_than_10m")
+        collection_house_type = collection_house_type or data.get("collection_house_type", "house_ground_and_1st")
+        collection_internal_access = collection_internal_access or data.get("collection_internal_access", "stairs_only")
+        collection_floor_level = collection_floor_level or data.get("collection_floor_level", "ground_floor")
         
         # Delivery assessment
         delivery_parking = delivery_parking or data.get("delivery_parking", "driveway")
-        delivery_parking_distance = delivery_parking_distance or data.get("delivery_parking_distance", "less_than_5m")
-        delivery_internal_access = delivery_internal_access or data.get("delivery_internal_access", "ground_first")
+        delivery_parking_distance = delivery_parking_distance or data.get("delivery_parking_distance", "less_than_10m")
+        delivery_house_type = delivery_house_type or data.get("delivery_house_type", "house_ground_and_1st")
+        delivery_internal_access = delivery_internal_access or data.get("delivery_internal_access", "stairs_only")
+        delivery_floor_level = delivery_floor_level or data.get("delivery_floor_level", "ground_floor")
         
         # Move date data
         notice_period = notice_period or data.get("notice_period", "within_month")
         move_day = move_day or data.get("move_day", "sun_to_thurs")
         collection_time = collection_time or data.get("collection_time", "flexible")
         
-        # Email
         user_email = user_email or data.get("user_email")
         send_email = send_email or data.get("send_email", False)
         
@@ -2573,7 +1668,7 @@ def search_companies_with_cost(
             frappe.local.response['http_status_code'] = 400
             return {"success": False, "message": "Pincode is required"}
         
-        # Parse selected items and dismantle items
+        # Parse JSON inputs
         if isinstance(selected_items, str):
             selected_items = json.loads(selected_items)
         if isinstance(dismantle_items, str):
@@ -2585,33 +1680,7 @@ def search_companies_with_cost(
         dismantle_items = dismantle_items or {}
         additional_spaces = additional_spaces or []
         
-        # ========== AUTO-CALCULATE VOLUMES ==========
-        auto_volumes = auto_calculate_volumes(selected_items, dismantle_items)
-        
-        # Use auto-calculated values if not provided
-        if packing_volume_m3 is None or packing_volume_m3 == 0:
-            packing_volume_m3 = auto_volumes['packing_volume_m3']
-        else:
-            packing_volume_m3 = float(packing_volume_m3)
-            
-        if dismantling_volume_m3 is None or dismantling_volume_m3 == 0:
-            dismantling_volume_m3 = auto_volumes['dismantling_volume_m3']
-        else:
-            dismantling_volume_m3 = float(dismantling_volume_m3)
-            
-        if reassembly_volume_m3 is None or reassembly_volume_m3 == 0:
-            reassembly_volume_m3 = auto_volumes['reassembly_volume_m3']
-        else:
-            reassembly_volume_m3 = float(reassembly_volume_m3)
-        
-        # Log calculated volumes for debugging
-        frappe.log_error(
-            f"Auto-calculated volumes:\nPacking: {packing_volume_m3}m³\n"
-            f"Dismantling: {dismantling_volume_m3}m³\nReassembly: {reassembly_volume_m3}m³",
-            "Volume Auto-Calculation"
-        )
-        
-        # Get user email from token if not provided
+        # Get user email from token if needed
         if send_email and not user_email:
             try:
                 user_info = get_user_from_token()
@@ -2619,40 +1688,103 @@ def search_companies_with_cost(
             except:
                 user_email = None
         
-        # Calculate total volume from inventory
-        total_volume_m3 = 0
-        item_details = []
+        # ========== LOAD ALL CONSTANTS FROM CONFIG MANAGER ==========
+        additional_spaces_config = get_additional_spaces()
+        property_volumes_config = get_property_volumes()
+        quantity_multipliers_config = get_quantity_multipliers()
+        collection_assessment_config = get_collection_assessment()
+        notice_multipliers_config = get_notice_period_multipliers()
+        move_day_multipliers_config = get_move_day_multipliers()
+        pricing_config = get_pricing_config()
         
+        # ========== INITIALIZE ALL VOLUME VARIABLES ==========
+        total_volume_m3 = 0
+        packing_volume_m3 = 0
+        dismantling_volume_m3 = 0
+        reassembly_volume_m3 = 0
+        item_details = []
+        missing_items = []
+        
+        # ========== CALCULATE VOLUMES FROM SELECTED ITEMS ==========
         if selected_items:
             for item_name, quantity_val in selected_items.items():
                 try:
+                    # Check if item exists first
+                    if not frappe.db.exists("Moving Inventory Item", item_name):
+                        missing_items.append(item_name)
+                        safe_log("Missing Inventory Item", f"Item '{item_name}' not found in database")
+                        continue
+                    
                     item = frappe.get_doc("Moving Inventory Item", item_name)
-                    volume = item.average_volume * int(quantity_val)
-                    total_volume_m3 += volume
+                    volume_per_item = item.average_volume
+                    item_quantity = int(quantity_val)
+                    item_total_volume = volume_per_item * item_quantity
+                    
+                    total_volume_m3 += item_total_volume
+                    
+                    # Check if this item is marked for dismantling
+                    if dismantle_items.get(item_name, False):
+                        dismantling_volume_m3 += item_total_volume
+                    
+                    # Check if this item needs packing (small items)
+                    item_name_lower = item_name.lower()
+                    needs_packing = determine_if_needs_boxing(item_name_lower, volume_per_item)
+                    if needs_packing:
+                        packing_volume_m3 += item_total_volume
                     
                     item_details.append({
                         "item_name": item_name,
-                        "quantity": quantity_val,
-                        "volume_per_item": item.average_volume,
-                        "total_volume": round(volume, 2),
-                        "needs_dismantling": dismantle_items.get(item_name, False)
+                        "quantity": item_quantity,
+                        "volume_per_item": volume_per_item,
+                        "total_volume": round(item_total_volume, 2),
+                        "needs_dismantling": dismantle_items.get(item_name, False),
+                        "needs_packing": needs_packing
                     })
+                    
                 except Exception as e:
-                    frappe.log_error(f"Item not found: {item_name}", "Search Cost Calculation")
+                    missing_items.append(item_name)
+                    safe_log(f"Item Error: {item_name}", str(e))
+                    continue
         
-        # If no items, calculate from property type
+        # ========== FALLBACK TO PROPERTY-BASED CALCULATION ==========
         if total_volume_m3 == 0 and property_type:
-            total_volume_m3 = calculate_total_volume({
-                'property_type': property_type,
-                'house_size': property_size if property_type == 'house' else None,
-                'flat_size': property_size if property_type == 'flat' else None,
-                'office_size': property_size if property_type == 'office' else None,
-                'vehicle_type': property_size if property_type == 'a_few_items' else None,
-                'additional_spaces': additional_spaces,
-                'quantity': quantity
-            })
+            if property_type == 'house' and additional_spaces:
+                # Use config for house calculation with additional spaces
+                base_volume = property_volumes_config.get('house', {}).get(property_size, 0)
+                for space in additional_spaces:
+                    base_volume += additional_spaces_config.get(space, 0)
+                multiplier = quantity_multipliers_config.get(quantity, 1.0)
+                total_volume_m3 = base_volume * multiplier
+            else:
+                # Use standard property calculation
+                pricing_data = {
+                    'property_type': property_type,
+                    'quantity': quantity
+                }
+                
+                if property_type == 'house':
+                    pricing_data['house_size'] = property_size
+                    pricing_data['additional_spaces'] = additional_spaces
+                elif property_type == 'flat':
+                    pricing_data['flat_size'] = property_size
+                elif property_type == 'office':
+                    pricing_data['office_size'] = property_size
+                elif property_type == 'a_few_items':
+                    pricing_data['vehicle_type'] = property_size
+                    pricing_data['space_usage'] = quantity
+                
+                total_volume_m3 = calculate_total_volume(pricing_data)
+            
+            # For property-based, estimate packing/dismantling volumes
+            if include_packing:
+                packing_volume_m3 = total_volume_m3 * 0.3  # 30% needs packing
+            if include_dismantling:
+                dismantling_volume_m3 = total_volume_m3 * 0.1  # 10% needs dismantling
         
-        # Search companies by pincode
+        # If dismantling is included, reassembly volume = dismantling volume
+        reassembly_volume_m3 = dismantling_volume_m3 if include_dismantling else 0
+        
+        # ========== SEARCH COMPANIES ==========
         companies = frappe.db.sql("""
             SELECT * 
             FROM `tabLogistics Company`
@@ -2667,7 +1799,6 @@ def search_companies_with_cost(
             "pincode_pattern": f'%{pincode}%'
         }, as_dict=True)
         
-        # Filter and calculate costs for available companies
         available_companies = []
         
         for company in companies:
@@ -2675,80 +1806,47 @@ def search_companies_with_cost(
             if not check_company_can_view_requests(company):
                 continue
             
-            # Parse JSON fields
             parse_json_fields(company)
             
-            # Get company rates
+            # ========== GET COMPANY RATES (with fallback to config defaults) ==========
             company_rates = {
-                'loading_cost_per_m3': float(company.get('loading_cost_per_m3', 0) or 35.00),
-                'packing_cost_per_m3': float(company.get('packing_cost_per_box', 0) or 12.25),
-                'disassembly_cost_per_m3': float(company.get('disassembly_cost_per_item', 0) or 25.00),
-                'assembly_cost_per_m3': float(company.get('assembly_cost_per_item', 0) or 50.00),
-                'cost_per_mile_under_100': float(company.get('cost_per_mile_under_25', 0) or 0.25),
-                'cost_per_mile_over_100': float(company.get('cost_per_mile_over_25', 0) or 0.15),
+                'loading_cost_per_m3': float(company.get('loading_cost_per_m3', 0) or pricing_config.get('loading_cost_per_m3', 35.00)),
+                'disassembly_per_m3': float(company.get('disassembly_cost_per_item', 0) or pricing_config.get('disassembly_per_m3', 25.00)),
+                'assembly_per_m3': float(company.get('assembly_cost_per_item', 0) or pricing_config.get('assembly_per_m3', 50.00)),
+                'cost_per_mile_under_100': float(company.get('cost_per_mile_under_25', 0) or pricing_config.get('cost_per_mile_under_100', 0.25)),
+                'cost_per_mile_over_100': float(company.get('cost_per_mile_over_25', 0) or pricing_config.get('cost_per_mile_over_100', 0.15)),
             }
             
-            # ========== Property Assessment Multipliers ==========
-            collection_multiplier = 1.0
-            parking_dist_map = {
-                'less_than_5m': 1.0,
-                '5_to_10m': 1.0,
-                '10_to_15m': 1.05,
-                '15_to_20m': 1.05,
-                'over_20m': 1.1
-            }
-            collection_multiplier *= parking_dist_map.get(collection_parking_distance, 1.0)
+            # ========== CALCULATE PROPERTY ASSESSMENT (ADDITIVE) - FROM CONFIG ==========
+            collection_increment = 0.0
+            collection_increment += collection_assessment_config.get('parking', {}).get(collection_parking, 0.0)
+            collection_increment += collection_assessment_config.get('parking_distance', {}).get(collection_parking_distance, 0.0)
             
-            if property_type in ['house', 'bungalow', 'town_house']:
-                access_map = {
-                    'ground_only': 1.0,
-                    'ground_first': 1.0,
-                    'ground_first_second': 1.025
-                }
-                collection_multiplier *= access_map.get(collection_internal_access, 1.0)
+            if property_type in ['house']:
+                collection_increment += collection_assessment_config.get('house_type', {}).get(collection_house_type, 0.0)
             else:
-                if 'lift' in collection_internal_access.lower():
-                    collection_multiplier *= 1.1
-                elif 'stairs' in collection_internal_access.lower():
-                    collection_multiplier *= 1.05
-                
-                floor_map = {
-                    'ground_floor': 1.0,
-                    'first_floor': 1.1,
-                    'second_floor': 1.15,
-                    'third_floor_plus': 1.2
-                }
-                collection_multiplier *= floor_map.get(collection_internal_access, 1.0)
+                collection_increment += collection_assessment_config.get('internal_access', {}).get(collection_internal_access, 0.0)
+                collection_increment += collection_assessment_config.get('floor_level', {}).get(collection_floor_level, 0.0)
             
-            delivery_multiplier = 1.0
-            delivery_multiplier *= parking_dist_map.get(delivery_parking_distance, 1.0)
+            # Delivery Assessment
+            delivery_increment = 0.0
+            delivery_increment += collection_assessment_config.get('parking', {}).get(delivery_parking, 0.0)
+            delivery_increment += collection_assessment_config.get('parking_distance', {}).get(delivery_parking_distance, 0.0)
             
-            if property_type in ['house', 'bungalow', 'town_house']:
-                access_map = {
-                    'ground_only': 1.0,
-                    'ground_first': 1.0,
-                    'ground_first_second': 1.025
-                }
-                delivery_multiplier *= access_map.get(delivery_internal_access, 1.0)
+            if property_type in ['house']:
+                delivery_increment += collection_assessment_config.get('house_type', {}).get(delivery_house_type, 0.0)
             else:
-                if 'lift' in delivery_internal_access.lower():
-                    delivery_multiplier *= 1.1
-                elif 'stairs' in delivery_internal_access.lower():
-                    delivery_multiplier *= 1.05
-                
-                floor_map = {
-                    'ground_floor': 1.0,
-                    'first_floor': 1.1,
-                    'second_floor': 1.15,
-                    'third_floor_plus': 1.2
-                }
-                delivery_multiplier *= floor_map.get(delivery_internal_access, 1.0)
+                delivery_increment += collection_assessment_config.get('internal_access', {}).get(delivery_internal_access, 0.0)
+                delivery_increment += collection_assessment_config.get('floor_level', {}).get(delivery_floor_level, 0.0)
             
-            combined_property_multiplier = (collection_multiplier + delivery_multiplier) / 2
+            collection_multiplier = 1.0 + collection_increment
+            delivery_multiplier = 1.0 + delivery_increment
             
-            # ========== Calculate Costs ==========
-            loading_cost = total_volume_m3 * company_rates['loading_cost_per_m3'] * combined_property_multiplier
+            # ========== CALCULATE INVENTORY COST ==========
+            base_inventory = total_volume_m3 * company_rates['loading_cost_per_m3']
+            inventory_cost = base_inventory * collection_multiplier * delivery_multiplier
             
+            # ========== CALCULATE MILEAGE COST ==========
             distance = float(distance_miles or 0)
             if distance <= 100:
                 mileage_cost = distance * total_volume_m3 * company_rates['cost_per_mile_under_100']
@@ -2758,67 +1856,60 @@ def search_companies_with_cost(
                 cost_remaining = remaining_miles * total_volume_m3 * company_rates['cost_per_mile_over_100']
                 mileage_cost = cost_first_100 + cost_remaining
             
-            # Optional extras - NOW USING AUTO-CALCULATED VOLUMES
+            # ========== CALCULATE OPTIONAL EXTRAS ==========
             packing_cost = 0
             if include_packing and packing_volume_m3 > 0:
-                packing_cost = packing_volume_m3 * company_rates['packing_cost_per_m3']
+                # Use packing percentage from config
+                packing_cost = inventory_cost * pricing_config.get('packing_percentage', 0.35)
             
             dismantling_cost = 0
             if include_dismantling and dismantling_volume_m3 > 0:
-                dismantling_cost = dismantling_volume_m3 * company_rates['disassembly_cost_per_m3']
+                dismantling_cost = dismantling_volume_m3 * company_rates['disassembly_per_m3']
             
             reassembly_cost = 0
             if include_reassembly and reassembly_volume_m3 > 0:
-                reassembly_cost = reassembly_volume_m3 * company_rates['assembly_cost_per_m3']
+                reassembly_cost = reassembly_volume_m3 * company_rates['assembly_per_m3']
             
-            subtotal = loading_cost + mileage_cost + packing_cost + dismantling_cost + reassembly_cost
+            # ========== CALCULATE SUBTOTAL ==========
+            subtotal = inventory_cost + mileage_cost + packing_cost + dismantling_cost + reassembly_cost
             
-            # Move date multipliers
-            notice_map = {
-                'flexible': 0.8,
-                'within_3_days': 1.3,
-                'within_week': 1.2,
-                'within_2_weeks': 1.1,
-                'within_month': 1.0,
-                'over_month': 0.9
-            }
-            notice_multiplier = notice_map.get(notice_period, 1.0)
-            
-            day_map = {
-                'sun_to_thurs': 1.0,
-                'fri_sat': 1.15,
-                'friday_saturday': 1.15
-            }
-            day_multiplier = day_map.get(move_day, 1.0)
-            
-            time_multiplier = 1.0
-            move_date_multiplier = notice_multiplier * day_multiplier * time_multiplier
+            # ========== APPLY MOVE DATE MULTIPLIER - FROM CONFIG ==========
+            notice_multiplier = notice_multipliers_config.get(notice_period, 1.0)
+            day_multiplier = move_day_multipliers_config.get(move_day, 1.0)
+            move_date_multiplier = notice_multiplier * day_multiplier
             
             final_total = subtotal * move_date_multiplier
             date_adjustment = final_total - subtotal
             
-            # Add detailed cost breakdown
+            # ========== ADD PRICING TO COMPANY ==========
             company['exact_pricing'] = {
                 'total_volume_m3': round(total_volume_m3, 2),
                 'distance_miles': distance,
                 
-                # AUTO-CALCULATED VOLUMES
-                'auto_calculated_volumes': {
-                    'packing_volume_m3': round(packing_volume_m3, 2),
-                    'dismantling_volume_m3': round(dismantling_volume_m3, 2),
-                    'reassembly_volume_m3': round(reassembly_volume_m3, 2)
+                'volumes_breakdown': {
+                    'total_volume': round(total_volume_m3, 2),
+                    'packing_volume': round(packing_volume_m3, 2),
+                    'dismantling_volume': round(dismantling_volume_m3, 2),
+                    'reassembly_volume': round(reassembly_volume_m3, 2)
                 },
                 
+                'collection_increment': round(collection_increment, 3),
                 'collection_multiplier': round(collection_multiplier, 3),
+                'delivery_increment': round(delivery_increment, 3),
                 'delivery_multiplier': round(delivery_multiplier, 3),
-                'combined_property_multiplier': round(combined_property_multiplier, 3),
+                'combined_property_multiplier': round(collection_multiplier * delivery_multiplier, 3),
                 
-                'loading_cost': round(loading_cost, 2),
+                'inventory_cost': round(inventory_cost, 2),
                 'mileage_cost': round(mileage_cost, 2),
                 
                 'packing_cost': round(packing_cost, 2),
+                'packing_formula': f"Inventory (£{round(inventory_cost, 2)}) × {int(pricing_config.get('packing_percentage', 0.35) * 100)}% = £{round(packing_cost, 2)}",
+                
                 'dismantling_cost': round(dismantling_cost, 2),
+                'dismantling_formula': f"{round(dismantling_volume_m3, 2)}m³ × £{company_rates['disassembly_per_m3']}/m³ = £{round(dismantling_cost, 2)}",
+                
                 'reassembly_cost': round(reassembly_cost, 2),
+                'reassembly_formula': f"{round(reassembly_volume_m3, 2)}m³ × £{company_rates['assembly_per_m3']}/m³ = £{round(reassembly_cost, 2)}",
                 
                 'subtotal_before_date': round(subtotal, 2),
                 'move_date_multiplier': round(move_date_multiplier, 3),
@@ -2827,7 +1918,7 @@ def search_companies_with_cost(
                 'final_total': round(final_total, 2),
                 
                 'breakdown': {
-                    'loading': round(loading_cost, 2),
+                    'inventory': round(inventory_cost, 2),
                     'mileage': round(mileage_cost, 2),
                     'packing': round(packing_cost, 2),
                     'dismantling': round(dismantling_cost, 2),
@@ -2835,20 +1926,22 @@ def search_companies_with_cost(
                     'date_adjustment': round(date_adjustment, 2)
                 },
                 
-                'multipliers': {
-                    'notice_period': notice_multiplier,
-                    'move_day': day_multiplier,
-                    'collection_time': time_multiplier,
-                    'property_collection': round(collection_multiplier, 3),
-                    'property_delivery': round(delivery_multiplier, 3)
+                'config_source': 'system_configuration',
+                'formula_notes': {
+                    'property_assessment': 'ADDITIVE (1.0 + increments)',
+                    'packing': f"{int(pricing_config.get('packing_percentage', 0.35) * 100)}% of Inventory Cost (from config)",
+                    'assembly_disassembly': 'Per m³ of items (from config)',
+                    'all_constants': 'Loaded dynamically from System Configuration'
                 }
             }
             
             company['pricing_rates'] = company_rates
             
+            # Add subscription info - from config
             plan = company.get('subscription_plan', 'Free')
             viewed = int(company.get('requests_viewed_this_month', 0) or 0)
-            limit = PLAN_LIMITS.get(plan, 5)
+            plan_limits_config = get_plan_limits()
+            limit = plan_limits_config.get(plan, 5)
             
             company['subscription_info'] = {
                 'plan': plan,
@@ -2859,6 +1952,7 @@ def search_companies_with_cost(
             
             available_companies.append(company)
         
+        # Sort by final total
         available_companies.sort(key=lambda x: x['exact_pricing']['final_total'])
         
         result = {
@@ -2869,27 +1963,25 @@ def search_companies_with_cost(
             "data": available_companies,
             "search_parameters": {
                 "pincode": pincode,
+                "total_volume_m3": round(total_volume_m3, 2),
+                "dismantling_volume_m3": round(dismantling_volume_m3, 2),
+                "reassembly_volume_m3": round(reassembly_volume_m3, 2),
+                "packing_volume_m3": round(packing_volume_m3, 2),
+                "item_details": item_details,
+                "missing_items": missing_items,
                 "property_type": property_type,
                 "property_size": property_size,
-                "total_volume_m3": round(total_volume_m3, 2),
                 "distance_miles": distance_miles,
-                # Address fields - NEW
                 "pickup_address": pickup_address,
                 "pickup_city": pickup_city,
                 "delivery_address": delivery_address,
                 "delivery_city": delivery_city,
                 "additional_spaces": additional_spaces,
                 "quantity": quantity,
-                "item_details": item_details,
                 "optional_extras": {
                     "packing": include_packing,
                     "dismantling": include_dismantling,
                     "reassembly": include_reassembly
-                },
-                "auto_calculated_volumes": {
-                    "packing_volume_m3": round(packing_volume_m3, 2),
-                    "dismantling_volume_m3": round(dismantling_volume_m3, 2),
-                    "reassembly_volume_m3": round(reassembly_volume_m3, 2)
                 },
                 "move_date": {
                     "notice_period": notice_period,
@@ -2897,8 +1989,32 @@ def search_companies_with_cost(
                     "collection_time": collection_time
                 }
             },
-            "pricing_note": "Volumes for packing, dismantling, and reassembly are auto-calculated based on selected items"
+            "pricing_note": "All constants loaded dynamically from System Configuration via config_manager.py",
+            "config_info": {
+                "source": "System Configuration DocType",
+                "editable_via": "Admin Dashboard",
+                "constants_used": [
+                    "additional_spaces",
+                    "property_volumes",
+                    "quantity_multipliers",
+                    "collection_assessment",
+                    "notice_period_multipliers",
+                    "move_day_multipliers",
+                    "pricing_config",
+                    "plan_limits"
+                ]
+            },
+            "warnings": []
         }
+        
+        # Add warnings if items were missing
+        if missing_items:
+            result["warnings"].append({
+                "type": "missing_items",
+                "message": f"{len(missing_items)} inventory items not found in database",
+                "items": missing_items,
+                "suggestion": "Calculation fell back to property-based volume estimation" if total_volume_m3 > 0 else "Please check item names"
+            })
         
         # Send email if requested
         if send_email and user_email:
@@ -2916,12 +2032,14 @@ def search_companies_with_cost(
         return result
     
     except Exception as e:
-        frappe.log_error(f"Search with Exact Cost Error: {str(e)}", "Exact Cost Calculation")
+        import traceback
+        error_trace = traceback.format_exc()
+        safe_log("Search with Exact Cost Error", error_trace[:2000])
         frappe.local.response['http_status_code'] = 500
         return {"success": False, "message": f"Failed to search companies: {str(e)}"}
     
-
-
+    
+    
 # Helper functions for box calculation
 def is_box_item(item_name):
     """Check if item is already a box"""

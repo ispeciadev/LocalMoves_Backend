@@ -18,34 +18,33 @@ from localmoves.api.request import (
 from localmoves.api.request_pricing import calculate_comprehensive_price
 from localmoves.api.company import search_companies_with_cost
 
-# ==================== REQUEST PAYMENT CONFIGURATION ====================
-
-REQUEST_PAYMENT_CONFIG = {
-    "deposit_percentage": 10,
-    "currency": "GBP",
-    "payment_methods": ["Stripe", "Razorpay", "PayPal", "Bank Transfer"],
-    "refund_policy_days": 7
-}
-
-
 # ==================== HELPER FUNCTIONS ====================
 
 def calculate_payment_amounts(total_amount):
-    """Calculate deposit and remaining amounts"""
-    deposit = round(total_amount * (REQUEST_PAYMENT_CONFIG["deposit_percentage"] / 100), 2)
+    """Calculate deposit and remaining amounts using admin-configured deposit percentage"""
+    # Import from dashboard
+    from localmoves.api.dashboard import get_deposit_percentage
+    
+    # Get current admin-configured percentage
+    deposit_percentage = get_deposit_percentage()
+    
+    deposit = round(total_amount * (deposit_percentage / 100), 2)
     remaining = round(total_amount - deposit, 2)
     
     return {
         "total_amount": total_amount,
         "deposit_amount": deposit,
         "remaining_amount": remaining,
-        "deposit_percentage": REQUEST_PAYMENT_CONFIG["deposit_percentage"]
+        "deposit_percentage": deposit_percentage
     }
-
 
 def create_payment_transaction(request_id, company_name, payment_amounts, user_info):
     """Create a Payment Transaction record for the logistics request"""
     try:
+        # Get dynamic config from dashboard
+        from localmoves.api.dashboard import get_system_config_from_db
+        config = get_system_config_from_db()
+        
         payment_doc = frappe.get_doc({
             "doctype": "Payment Transaction",
             "request_id": request_id,
@@ -62,8 +61,8 @@ def create_payment_transaction(request_id, company_name, payment_amounts, user_i
             "deposit_status": "Unpaid",
             "balance_status": "Unpaid",
             
-            # Metadata
-            "currency": REQUEST_PAYMENT_CONFIG["currency"],
+            # Metadata - NOW DYNAMIC from database
+            "currency": config.get('currency', 'GBP'),
             "created_at": datetime.now(),
             "updated_at": datetime.now()
         })
@@ -111,6 +110,7 @@ def send_payment_confirmation_email(user_email, user_name, request_id, payment_d
         total_amount = f"£{payment_data['total_amount']:.2f}"
         deposit_amount = f"£{payment_data['deposit_amount']:.2f}"
         remaining_amount = f"£{payment_data['remaining_amount']:.2f}"
+        deposit_pct = payment_data.get('deposit_percentage', 10)
         
         # Build email subject
         subject = f"Payment Confirmation - Request #{request_id}"
@@ -144,89 +144,28 @@ def send_payment_confirmation_email(user_email, user_name, request_id, payment_d
                 </table>
             </div>
             
-            <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                <h3 style="color: #2c3e50; margin-top: 0;">Move Information</h3>
-                <table style="width: 100%; border-collapse: collapse;">
-                    <tr>
-                        <td style="padding: 8px 0; font-weight: bold;">Pickup:</td>
-                        <td style="padding: 8px 0;">{request_data.get('pickup_address', '')}, {request_data.get('pickup_city', '')}, {request_data.get('pickup_pincode', '')}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px 0; font-weight: bold;">Delivery:</td>
-                        <td style="padding: 8px 0;">{request_data.get('delivery_address', '')}, {request_data.get('delivery_city', '')}, {request_data.get('delivery_pincode', '')}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px 0; font-weight: bold;">Distance:</td>
-                        <td style="padding: 8px 0;">{request_data.get('distance_miles', 0)} miles</td>
-                    </tr>
-                </table>
-            </div>
-            
             <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
                 <h3 style="color: #2c3e50; margin-top: 0;">Payment Summary</h3>
                 <table style="width: 100%; border-collapse: collapse;">
-                    <tr>
-                        <td style="padding: 8px 0; font-weight: bold;">Payment ID:</td>
-                        <td style="padding: 8px 0;">{payment_data['payment_id']}</td>
-                    </tr>
                     <tr>
                         <td style="padding: 8px 0; font-weight: bold;">Total Amount:</td>
                         <td style="padding: 8px 0; font-size: 18px; color: #2c3e50;">{total_amount}</td>
                     </tr>
                     <tr style="background-color: rgba(52, 152, 219, 0.1);">
-                        <td style="padding: 8px 0; font-weight: bold;">Deposit Required (10%):</td>
+                        <td style="padding: 8px 0; font-weight: bold;">Deposit Required ({deposit_pct}%):</td>
                         <td style="padding: 8px 0; font-size: 16px; color: #3498db;">{deposit_amount}</td>
                     </tr>
                     <tr>
                         <td style="padding: 8px 0; font-weight: bold;">Remaining Balance:</td>
                         <td style="padding: 8px 0;">{remaining_amount}</td>
                     </tr>
-                    <tr>
-                        <td style="padding: 8px 0; font-weight: bold;">Deposit Status:</td>
-                        <td style="padding: 8px 0;">
-                            {'<div style="background-color: #d4edda; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #28a745;"><p style="margin: 0; color: #155724;"><strong>✓ Deposit Paid:</strong> Your 10% deposit has been successfully processed. The remaining balance will be due before the move.</p></div>' if payment_data.get('deposit_paid') else '<div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;"><p style="margin: 0; color: #856404;"><strong>⚠ Action Required:</strong> Please pay the 10% deposit of ' + deposit_amount + ' to confirm your booking. You can pay through your account dashboard.</p></div>'}
-                                         color: white; 
-                                         padding: 4px 12px; 
-                                         border-radius: 12px; 
-                                         font-size: 12px;">
-                                {payment_data['deposit_status']}
-                            </span>
-                        </td>
-                    </tr>
                 </table>
             </div>
             
-            <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                <h3 style="color: #2c3e50; margin-top: 0;">Price Breakdown</h3>
-                <table style="width: 100%; border-collapse: collapse;">
-                    <tr>
-                        <td style="padding: 8px 0;">Loading Cost:</td>
-                        <td style="padding: 8px 0; text-align: right;">£{price_breakdown.get('adjusted_loading_cost', 0):.2f}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px 0;">Mileage Cost ({request_data.get('distance_miles', 0)} miles):</td>
-                        <td style="padding: 8px 0; text-align: right;">£{price_breakdown.get('mileage_cost', 0):.2f}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px 0;">Optional Extras:</td>
-                        <td style="padding: 8px 0; text-align: right;">£{price_breakdown.get('optional_extras', {}).get('total', 0):.2f}</td>
-                    </tr>
-                    <tr style="border-top: 2px solid #dee2e6; font-weight: bold; font-size: 16px;">
-                        <td style="padding: 12px 0;">Total:</td>
-                        <td style="padding: 12px 0; text-align: right; color: #2c3e50;">{total_amount}</td>
-                    </tr>
-                </table>
-            </div>
-            
-            {'<div style="background-color: #d4edda; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #28a745;"><p style="margin: 0; color: #155724;"><strong>✓ Deposit Paid:</strong> Your 10% deposit has been successfully processed. The remaining balance will be due before the move.</p></div>' if payment_data.get('deposit_paid') else '<div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;"><p style="margin: 0; color: #856404;"><strong>⚠ Action Required:</strong> Please pay the 10% deposit of ' + deposit_amount + ' to confirm your booking. You can pay through your account dashboard.</p></div>'}
-            
-            <div style="margin: 30px 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; text-align: center;">
-                <p style="color: white; margin: 0; font-size: 14px;">Track your request and manage payments from your dashboard</p>
-            </div>
+            {'<div style="background-color: #d4edda; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #28a745;"><p style="margin: 0; color: #155724;"><strong>✓ Deposit Paid:</strong> Your ' + str(deposit_pct) + '% deposit has been successfully processed.</p></div>' if payment_data.get('deposit_paid') else '<div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;"><p style="margin: 0; color: #856404;"><strong>⚠ Action Required:</strong> Please pay the ' + str(deposit_pct) + '% deposit of ' + deposit_amount + ' to confirm your booking.</p></div>'}
             
             <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #6c757d;">
                 <p><strong>Need help?</strong> Contact us at support@localmoves.com</p>
-                <p>This is an automated confirmation email. Please do not reply to this message.</p>
             </div>
         </div>
         """
@@ -251,8 +190,7 @@ def send_payment_confirmation_email(user_email, user_name, request_id, payment_d
 def create_request_with_payment():
     """
     Create logistics request with integrated payment system
-    Only 10% deposit payment is processed initially
-    NOW USES search_companies_with_cost FOR PRICING
+    Uses DYNAMIC deposit percentage from admin config
     """
     try:
         # Step 1: Authenticate user
@@ -293,7 +231,7 @@ def create_request_with_payment():
         requested_company_name = data.get('company_name')
         distance_miles = float(data.get('distance_miles', 0))
         
-        # Payment fields - ONLY FOR 10% DEPOSIT
+        # Payment fields - ONLY FOR DEPOSIT (NOW DYNAMIC %)
         payment_method = data.get('payment_method', 'Stripe')
         process_deposit = data.get('process_deposit', False)
         transaction_ref = data.get('transaction_ref')
@@ -334,7 +272,7 @@ def create_request_with_payment():
         if not price_breakdown or 'final_total' not in price_breakdown:
             return {
                 "success": False,
-                "message": "price_breakdown with final_total is required. Please call search_companies_with_cost first to get pricing."
+                "message": "price_breakdown with final_total is required."
             }
         
         final_total = float(price_breakdown['final_total'])
@@ -354,7 +292,7 @@ def create_request_with_payment():
             initial_status = "Pending"
             assigned_date_value = None
             previously_assigned_to = requested_company_name
-            assignment_message = f" but {requested_company_name} is at capacity. Will appear in blurred requests."
+            assignment_message = f" but {requested_company_name} is at capacity."
         
         # Step 4: Create logistics request
         request_doc = frappe.get_doc({
@@ -410,7 +348,7 @@ def create_request_with_payment():
         # Insert request
         request_doc.insert(ignore_permissions=True)
         
-        # Step 5: Create Payment Transaction (ONLY 10% DEPOSIT)
+        # Step 5: Create Payment Transaction (USES DYNAMIC DEPOSIT %)
         payment_amounts = calculate_payment_amounts(final_total)
         
         payment_doc = create_payment_transaction(
@@ -420,30 +358,25 @@ def create_request_with_payment():
             user_info=user_info
         )
         
-        # Step 6: Process ONLY 10% deposit if payment requested
+        # Step 6: Process deposit if payment requested
         if process_deposit and transaction_ref:
             # Mark deposit as paid
             payment_doc.db_set('deposit_status', "Paid", update_modified=False)
             payment_doc.db_set('deposit_paid_at', datetime.now(), update_modified=False)
             payment_doc.db_set('deposit_transaction_ref', transaction_ref, update_modified=False)
             payment_doc.db_set('payment_method', payment_method, update_modified=False)
-            
-            # IMPORTANT: Payment status is "Deposit Paid" not "Fully Paid"
             payment_doc.db_set('payment_status', "Deposit Paid", update_modified=False)
-            
-            # FIXED: Balance status should be "Paid" when deposit is done
-            payment_doc.db_set('balance_status', "Paid", update_modified=False)
+            payment_doc.db_set('balance_status', "Unpaid", update_modified=False)
             
             if gateway_response:
                 payment_doc.db_set('gateway_response', json.dumps(gateway_response), update_modified=False)
             
-            # Update request - only deposit paid
+            # Update request
             request_doc.db_set('payment_status', "Deposit Paid", update_modified=False)
             request_doc.db_set('deposit_paid', payment_doc.deposit_amount, update_modified=False)
             request_doc.db_set('remaining_amount', payment_doc.remaining_amount, update_modified=False)
             request_doc.db_set('payment_verified_at', datetime.now(), update_modified=False)
         else:
-            # No deposit payment processed yet
             update_request_with_payment(request_doc, payment_doc)
         
         # Increment view count if assigned
@@ -468,7 +401,7 @@ def create_request_with_payment():
                 delivery_date=delivery_date,
                 company_name=final_company_name,
                 status=initial_status,
-                property_size=pricing_data.get('house_size') or pricing_data.get('flat_size') or pricing_data.get('property_type'),
+                property_size=pricing_data.get('house_size') or pricing_data.get('flat_size'),
                 service_type="Standard"
             )
         except Exception as email_error:
@@ -485,6 +418,7 @@ def create_request_with_payment():
                     'total_amount': payment_amounts["total_amount"],
                     'deposit_amount': payment_amounts["deposit_amount"],
                     'remaining_amount': payment_amounts["remaining_amount"],
+                    'deposit_percentage': payment_amounts["deposit_percentage"],
                     'payment_status': "Deposit Paid" if process_deposit else "Pending",
                     'deposit_status': "Paid" if process_deposit else "Unpaid",
                     'deposit_paid': process_deposit
@@ -506,11 +440,12 @@ def create_request_with_payment():
             frappe.log_error(f"Payment confirmation email failed: {str(email_error)}")
         
         # Step 8: Return response
+        deposit_pct = payment_amounts["deposit_percentage"]
         deposit_status_msg = ""
         if process_deposit:
-            deposit_status_msg = f" 10% deposit (£{payment_amounts['deposit_amount']:.2f}) paid successfully. Remaining balance: £{payment_amounts['remaining_amount']:.2f}"
+            deposit_status_msg = f" {deposit_pct}% deposit (£{payment_amounts['deposit_amount']:.2f}) paid successfully."
         else:
-            deposit_status_msg = f" Please pay 10% deposit (£{payment_amounts['deposit_amount']:.2f}) to confirm booking."
+            deposit_status_msg = f" Please pay {deposit_pct}% deposit (£{payment_amounts['deposit_amount']:.2f}) to confirm."
         
         return {
             "success": True,
@@ -521,20 +456,19 @@ def create_request_with_payment():
                 "company_name": final_company_name,
                 "will_appear_in_blurred": previously_assigned_to is not None,
                 
-                # Payment information - ONLY 10% DEPOSIT
+                # Payment information - DYNAMIC DEPOSIT %
                 "payment": {
                     "payment_id": payment_doc.name,
                     "total_amount": payment_amounts["total_amount"],
                     "deposit_amount": payment_amounts["deposit_amount"],
                     "remaining_amount": payment_amounts["remaining_amount"],
+                    "deposit_percentage": deposit_pct,
                     "payment_status": "Deposit Paid" if process_deposit else "Pending",
                     "deposit_status": "Paid" if process_deposit else "Unpaid",
-                    "balance_status": "Paid" if process_deposit else "Unpaid",
+                    "balance_status": "Unpaid",
                     "payment_method": payment_method,
-                    "currency": REQUEST_PAYMENT_CONFIG["currency"],
-                    "deposit_paid": process_deposit,
-                    "deposit_percentage": 10,
-                    "note": "Only 10% deposit has been processed. Remaining 90% to be paid later."
+                    "currency": "GBP",
+                    "deposit_paid": process_deposit
                 },
                 
                 # Pricing breakdown
@@ -549,8 +483,9 @@ def create_request_with_payment():
         frappe.log_error(f"Create Request with Payment Error: {str(e)}\n{traceback.format_exc()}")
         frappe.db.rollback()
         return {"success": False, "message": f"Failed to create request: {str(e)}"}
-    
-# ==================== PROCESS FULL PAYMENT ====================
+
+
+# ==================== OTHER PAYMENT APIS ====================
 
 @frappe.whitelist(allow_guest=True)
 def process_full_payment():
@@ -584,7 +519,7 @@ def process_full_payment():
         if payment_doc.balance_status == "Paid":
             return {"success": False, "message": "Balance already paid"}
         
-        # Update payment transaction using db_set to avoid version tracking
+        # Update payment transaction
         payment_doc.db_set('balance_status', "Paid", update_modified=False)
         payment_doc.db_set('balance_paid_at', datetime.now(), update_modified=False)
         payment_doc.db_set('balance_transaction_ref', transaction_ref, update_modified=False)
@@ -624,8 +559,6 @@ def process_full_payment():
         frappe.db.rollback()
         return {"success": False, "message": f"Failed to process payment: {str(e)}"}
 
-
-# ==================== GET PAYMENT STATUS ====================
 
 @frappe.whitelist(allow_guest=True)
 def get_payment_status():
@@ -682,8 +615,6 @@ def get_payment_status():
         print(f"Get Payment Status Error: {str(e)}")
         return {"success": False, "message": f"Failed to fetch status: {str(e)}"}
 
-
-# ==================== GET MY PAYMENTS ====================
 
 @frappe.whitelist(allow_guest=True)
 def get_my_request_payments():

@@ -1,4 +1,6 @@
+
 from __future__ import unicode_literals
+
 
 app_name = "localmoves"
 app_title = "Localmoves"
@@ -7,8 +9,10 @@ app_description = "local moves"
 app_email = "megha250903@gmail.com"
 app_license = "mit"
 
+
 # ✅ JWT validation before Frappe auth
 before_request = ["localmoves.utils.jwt_auth.validate_jwt_before_request"]
+
 
 # ✅ Scheduler
 scheduler_events = {
@@ -26,6 +30,7 @@ scheduler_events = {
     ]
 }
 
+
 # ✅ CSRF bypass for REST APIs
 ignore_csrf_check_for = [
     "localmoves.api.auth.*",
@@ -38,6 +43,7 @@ ignore_csrf_check_for = [
     "localmoves.api.request_payment.*"  # NEW
 ]
 
+
 # ✅ Whitelisted method overrides
 override_whitelisted_methods = {
     # Auth
@@ -48,6 +54,7 @@ override_whitelisted_methods = {
     "localmoves.api.auth.reset_password": "localmoves.api.auth.reset_password",
     "localmoves.api.auth.update_profile": "localmoves.api.auth.update_profile",
 
+
     # Company
     "localmoves.api.company.create_company": "localmoves.api.company.create_company",
     "localmoves.api.company.update_company": "localmoves.api.company.update_company",
@@ -55,13 +62,14 @@ override_whitelisted_methods = {
     "localmoves.api.company.get_my_company": "localmoves.api.company.get_my_company",
     "localmoves.api.company.get_all_companies": "localmoves.api.company.get_all_companies",
     "localmoves.api.company.search_companies_by_pincode": "localmoves.api.company.search_companies_by_pincode",
-    
+   
     # ✅ NEW: Distance calculation and enhanced search
     "localmoves.api.company.calculate_distance": "localmoves.api.company.calculate_distance",
     "localmoves.api.company.validate_postcode": "localmoves.api.company.validate_postcode",
     "localmoves.api.company.search_companies_with_auto_distance": "localmoves.api.company.search_companies_with_auto_distance",
     "localmoves.api.company.get_inventory_categories": "localmoves.api.company.get_inventory_categories",
     "localmoves.api.company.get_items_by_category": "localmoves.api.company.get_items_by_category",
+
 
     # ✅ NEW: Inventory API
     "localmoves.api.inventory.create_item": "localmoves.api.inventory.create_item",
@@ -73,10 +81,20 @@ override_whitelisted_methods = {
     "localmoves.api.inventory.upload_all_inventory": "localmoves.api.inventory.upload_all_inventory",
     "localmoves.api.inventory.calculate_move_cost": "localmoves.api.inventory.calculate_move_cost",
 
+
     # Dashboard
     "localmoves.api.dashboard.get_admin_dashboard": "localmoves.api.dashboard.get_admin_dashboard",
     "localmoves.api.dashboard.get_manager_dashboard": "localmoves.api.dashboard.get_manager_dashboard",
     "localmoves.api.dashboard.get_user_dashboard": "localmoves.api.dashboard.get_user_dashboard",
+    "localmoves.api.dashboard.get_system_configuration": "localmoves.api.dashboard.get_system_configuration",
+    "localmoves.api.dashboard.update_system_configuration": "localmoves.api.dashboard.update_system_configuration",
+    "localmoves.api.dashboard.get_pricing_configuration": "localmoves.api.dashboard.get_pricing_configuration",
+    "localmoves.api.dashboard.update_pricing_configuration": "localmoves.api.dashboard.update_pricing_configuration",
+    "localmoves.api.dashboard.get_vehicle_configuration": "localmoves.api.dashboard.get_vehicle_configuration",
+    "localmoves.api.dashboard.update_vehicle_configuration": "localmoves.api.dashboard.update_vehicle_configuration",
+    "localmoves.api.dashboard.get_multiplier_configuration": "localmoves.api.dashboard.get_multiplier_configuration",
+    "localmoves.api.dashboard.update_multiplier_configuration": "localmoves.api.dashboard.update_multiplier_configuration",
+
 
     # Requests
     "localmoves.api.request.create_request": "localmoves.api.request.create_request",
@@ -92,6 +110,7 @@ override_whitelisted_methods = {
     "localmoves.api.request.search_requests_by_pincode": "localmoves.api.request.search_requests_by_pincode",
     "localmoves.api.request.get_quick_subscription_info": "localmoves.api.request.get_quick_subscription_info",
 
+
  # NEW: Request Payment APIs
     "localmoves.api.request_payment.create_request_with_payment": "localmoves.api.request_payment.create_request_with_payment",
     "localmoves.api.request_payment.process_deposit_payment": "localmoves.api.request_payment.process_deposit_payment",
@@ -100,10 +119,13 @@ override_whitelisted_methods = {
     "localmoves.api.request_payment.get_my_request_payments": "localmoves.api.request_payment.get_my_request_payments",
 
 
+
+
     "localmoves.api.payment_handler.verify_payment": "localmoves.api.payment_handler.verify_payment",
     "localmoves.api.payment_handler.get_payment_status": "localmoves.api.payment_handler.get_payment_status",
     "localmoves.api.payment_handler.get_payment_history": "localmoves.api.payment_handler.get_payment_history",
     "localmoves.api.payment_handler.admin_get_all_payments": "localmoves.api.payment_handler.admin_get_all_payments",
+
 
     # Payments
     "localmoves.api.payment.get_subscription_plans": "localmoves.api.payment.get_subscription_plans",
@@ -117,10 +139,12 @@ override_whitelisted_methods = {
     "localmoves.api.payment.process_payment": "localmoves.api.payment.process_payment",
 }
 
+
 # ✅ Override Frappe auth
 override_methods = {
     "frappe.api.validate_auth": "localmoves.utils.overrides.custom_validate_auth"
 }
+
 
 # ✅ FIX FOR 417 Expectation Failed
 # Prevent Frappe from blocking POST with hidden Expect header

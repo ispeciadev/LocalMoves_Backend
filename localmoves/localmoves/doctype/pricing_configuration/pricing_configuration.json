@@ -1,0 +1,250 @@
+
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:config_name",
+ "creation": "2024-12-16 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "config_name",
+  "section_pricing",
+  "loading_cost_per_m3",
+  "cost_per_mile_under_100",
+  "cost_per_mile_over_100",
+  "assembly_per_m3",
+  "disassembly_per_m3",
+  "packing_percentage",
+  "section_vehicles",
+  "vehicle_capacities_section",
+  "swb_van_capacity",
+  "mwb_van_capacity",
+  "lwb_van_capacity",
+  "section_multipliers",
+  "flexible_notice_multiplier",
+  "within_3_days_multiplier",
+  "within_week_multiplier",
+  "within_2_weeks_multiplier",
+  "within_month_multiplier",
+  "over_month_multiplier",
+  "sun_to_thurs_multiplier",
+  "friday_saturday_multiplier",
+  "column_break",
+  "packing_percentage_info"
+ ],
+ "fields": [
+  {
+   "fieldname": "config_name",
+   "fieldtype": "Data",
+   "label": "Configuration Name",
+   "reqd": 1,
+   "unique": 1,
+   "read_only": 0,
+   "options": "localmoves_pricing_config"
+  },
+  {
+   "fieldname": "section_pricing",
+   "fieldtype": "Section Break",
+   "label": "Pricing Configuration"
+  },
+  {
+   "fieldname": "loading_cost_per_m3",
+   "fieldtype": "Currency",
+   "label": "Loading Cost per m³",
+   "reqd": 1,
+   "default": "35.00",
+   "precision": 2
+  },
+  {
+   "fieldname": "cost_per_mile_under_100",
+   "fieldtype": "Currency",
+   "label": "Cost per Mile (Under 100 miles)",
+   "reqd": 1,
+   "default": "0.25",
+   "precision": 3
+  },
+  {
+   "fieldname": "cost_per_mile_over_100",
+   "fieldtype": "Currency",
+   "label": "Cost per Mile (Over 100 miles)",
+   "reqd": 1,
+   "default": "0.15",
+   "precision": 3
+  },
+  {
+   "fieldname": "assembly_per_m3",
+   "fieldtype": "Currency",
+   "label": "Assembly Cost per m³",
+   "reqd": 1,
+   "default": "50.00",
+   "precision": 2
+  },
+  {
+   "fieldname": "disassembly_per_m3",
+   "fieldtype": "Currency",
+   "label": "Disassembly Cost per m³",
+   "reqd": 1,
+   "default": "25.00",
+   "precision": 2
+  },
+  {
+   "fieldname": "packing_percentage",
+   "fieldtype": "Percent",
+   "label": "Packing Percentage (% of Inventory Cost)",
+   "reqd": 1,
+   "default": "35",
+   "precision": 2
+  },
+  {
+   "fieldname": "section_vehicles",
+   "fieldtype": "Section Break",
+   "label": "Vehicle Capacities (m³)"
+  },
+  {
+   "fieldname": "vehicle_capacities_section",
+   "fieldtype": "HTML",
+   "options": "<p><strong>Define carrying capacity for each vehicle type</strong></p>"
+  },
+  {
+   "fieldname": "swb_van_capacity",
+   "fieldtype": "Float",
+   "label": "SWB Van Capacity (m³)",
+   "reqd": 1,
+   "default": "5",
+   "precision": 2
+  },
+  {
+   "fieldname": "mwb_van_capacity",
+   "fieldtype": "Float",
+   "label": "MWB Van Capacity (m³)",
+   "reqd": 1,
+   "default": "8",
+   "precision": 2
+  },
+  {
+   "fieldname": "lwb_van_capacity",
+   "fieldtype": "Float",
+   "label": "LWB Van Capacity (m³)",
+   "reqd": 1,
+   "default": "11",
+   "precision": 2
+  },
+  {
+   "fieldname": "section_multipliers",
+   "fieldtype": "Section Break",
+   "label": "Price Multipliers"
+  },
+  {
+   "fieldname": "flexible_notice_multiplier",
+   "fieldtype": "Float",
+   "label": "Flexible Notice Period Multiplier",
+   "reqd": 1,
+   "default": "0.80",
+   "precision": 3,
+   "description": "Discount for flexible dates"
+  },
+  {
+   "fieldname": "within_3_days_multiplier",
+   "fieldtype": "Float",
+   "label": "Within 3 Days Notice Multiplier",
+   "reqd": 1,
+   "default": "1.30",
+   "precision": 3,
+   "description": "Surcharge for last-minute bookings"
+  },
+  {
+   "fieldname": "within_week_multiplier",
+   "fieldtype": "Float",
+   "label": "Within 1 Week Notice Multiplier",
+   "reqd": 1,
+   "default": "1.20",
+   "precision": 3
+  },
+  {
+   "fieldname": "within_2_weeks_multiplier",
+   "fieldtype": "Float",
+   "label": "Within 2 Weeks Notice Multiplier",
+   "reqd": 1,
+   "default": "1.10",
+   "precision": 3
+  },
+  {
+   "fieldname": "within_month_multiplier",
+   "fieldtype": "Float",
+   "label": "Within 1 Month Notice Multiplier",
+   "reqd": 1,
+   "default": "1.00",
+   "precision": 3,
+   "description": "Standard rate"
+  },
+  {
+   "fieldname": "over_month_multiplier",
+   "fieldtype": "Float",
+   "label": "Over 1 Month Notice Multiplier",
+   "reqd": 1,
+   "default": "0.90",
+   "precision": 3,
+   "description": "Discount for advance bookings"
+  },
+  {
+   "fieldname": "sun_to_thurs_multiplier",
+   "fieldtype": "Float",
+   "label": "Sunday-Thursday Multiplier",
+   "reqd": 1,
+   "default": "1.00",
+   "precision": 3,
+   "description": "Weekday standard rate"
+  },
+  {
+   "fieldname": "friday_saturday_multiplier",
+   "fieldtype": "Float",
+   "label": "Friday-Saturday Multiplier",
+   "reqd": 1,
+   "default": "1.15",
+   "precision": 3,
+   "description": "Weekend surcharge"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2024-12-16 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "LocalMoves",
+ "name": "Pricing Configuration",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Admin",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "quick_entry": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
+
+
