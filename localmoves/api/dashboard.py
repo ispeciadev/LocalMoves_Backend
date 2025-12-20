@@ -123,6 +123,113 @@ def create_request():
         frappe.db.rollback()
         return {'success': False, 'error': str(e)}
 
+# @frappe.whitelist()
+# def update_request():
+#     """Update request details"""
+#     try:
+#         ensure_session_data()
+        
+#         data = get_request_data()
+#         request_id = data.get('request_id')
+        
+#         if not request_id:
+#             return {'success': False, 'message': 'request_id is required'}
+        
+#         if not frappe.db.exists('Logistics Request', request_id):
+#             return {'success': False, 'message': 'Request not found'}
+        
+#         # Get the request document
+#         request_doc = frappe.get_doc('Logistics Request', request_id)
+        
+#         # HANDLE STATUS CHANGES
+#         new_status = data.get('status')
+#         if new_status:
+#             # If changing to Pending, clear company assignment
+#             if new_status == 'Pending' and request_doc.company_name:
+#                 # Store previous assignment
+#                 request_doc.previously_assigned_to = request_doc.company_name
+#                 request_doc.company_name = None
+#                 request_doc.company_email = None
+#                 request_doc.assigned_date = None
+#                 request_doc.status = 'Pending'
+            
+#             # If changing to Assigned, require company_name
+#             elif new_status == 'Assigned' and not data.get('company_name'):
+#                 if not request_doc.company_name:
+#                     return {
+#                         'success': False,
+#                         'message': 'company_name is required when status is "Assigned"'
+#                     }
+        
+#         # VALIDATE COMPANY NAME IF PROVIDED
+#         if data.get('company_name'):
+#             company_name = data.get('company_name')
+            
+#             # Allow empty string to clear assignment
+#             if company_name == "":
+#                 request_doc.company_name = None
+#                 request_doc.company_email = None
+#                 if request_doc.status == 'Assigned':
+#                     request_doc.status = 'Pending'
+#             else:
+#                 # Check if company exists
+#                 if not frappe.db.exists('Logistics Company', company_name):
+#                     available_companies = frappe.get_all('Logistics Company',
+#                         fields=['company_name'],
+#                         filters={'is_active': 1},
+#                         pluck='company_name'
+#                     )
+                    
+#                     return {
+#                         'success': False, 
+#                         'message': f'Company "{company_name}" not found',
+#                         'available_companies': available_companies
+#                     }
+                
+#                 # Check if company is active
+#                 company_doc = frappe.get_doc('Logistics Company', company_name)
+#                 if not company_doc.is_active:
+#                     return {
+#                         'success': False,
+#                         'message': f'Company "{company_name}" is not active'
+#                     }
+                
+#                 # Set company and update status
+#                 request_doc.company_name = company_name
+#                 request_doc.company_email = company_doc.manager_email
+#                 if not request_doc.assigned_date:
+#                     request_doc.assigned_date = frappe.utils.now()
+#                 if request_doc.status == 'Pending':
+#                     request_doc.status = 'Assigned'
+        
+#         # Update other fields
+#         for field in ['user_name', 'user_phone', 'pickup_address', 'pickup_city', 'pickup_pincode',
+#                       'delivery_address', 'delivery_city', 'delivery_pincode', 'service_type',
+#                       'item_description', 'item_weight', 'special_instructions',
+#                       'estimated_cost', 'actual_cost', 'priority', 'notes', 'delivery_date']:
+#             if field in data:
+#                 setattr(request_doc, field, data.get(field))
+        
+#         # Explicitly set status if provided and not already handled
+#         if 'status' in data and not data.get('company_name'):
+#             request_doc.status = data.get('status')
+        
+#         request_doc.flags.ignore_version = True
+#         request_doc.save(ignore_permissions=True)
+#         frappe.db.commit()
+        
+#         return {
+#             'success': True, 
+#             'message': 'Request updated successfully', 
+#             'data': request_doc.as_dict()
+#         }
+        
+#     except Exception as e:
+#         frappe.log_error(f"Update Request Error: {str(e)}")
+#         frappe.db.rollback()
+#         return {'success': False, 'error': str(e)} 
+
+
 @frappe.whitelist()
 def update_request():
     """Update request details"""
@@ -141,6 +248,16 @@ def update_request():
         # Get the request document
         request_doc = frappe.get_doc('Logistics Request', request_id)
         
+        # Track what we're updating for debugging
+        updated_fields = {}
+        
+        # EXPLICIT PAYMENT_STATUS HANDLING (FIRST PRIORITY)
+        if 'payment_status' in data:
+            old_value = request_doc.payment_status
+            new_value = data.get('payment_status')
+            request_doc.payment_status = new_value
+            updated_fields['payment_status'] = {'old': old_value, 'new': new_value}
+        
         # HANDLE STATUS CHANGES
         new_status = data.get('status')
         if new_status:
@@ -152,6 +269,7 @@ def update_request():
                 request_doc.company_email = None
                 request_doc.assigned_date = None
                 request_doc.status = 'Pending'
+                updated_fields['status'] = {'old': request_doc.status, 'new': 'Pending'}
             
             # If changing to Assigned, require company_name
             elif new_status == 'Assigned' and not data.get('company_name'):
@@ -171,6 +289,7 @@ def update_request():
                 request_doc.company_email = None
                 if request_doc.status == 'Assigned':
                     request_doc.status = 'Pending'
+                updated_fields['company_name'] = {'old': request_doc.company_name, 'new': None}
             else:
                 # Check if company exists
                 if not frappe.db.exists('Logistics Company', company_name):
@@ -195,40 +314,72 @@ def update_request():
                     }
                 
                 # Set company and update status
+                old_company = request_doc.company_name
                 request_doc.company_name = company_name
                 request_doc.company_email = company_doc.manager_email
+                updated_fields['company_name'] = {'old': old_company, 'new': company_name}
+                
                 if not request_doc.assigned_date:
                     request_doc.assigned_date = frappe.utils.now()
                 if request_doc.status == 'Pending':
                     request_doc.status = 'Assigned'
         
         # Update other fields
-        for field in ['user_name', 'user_phone', 'pickup_address', 'pickup_city', 'pickup_pincode',
-                      'delivery_address', 'delivery_city', 'delivery_pincode', 'service_type',
-                      'item_description', 'item_weight', 'special_instructions',
-                      'estimated_cost', 'actual_cost', 'priority', 'notes', 'delivery_date']:
-            if field in data:
-                setattr(request_doc, field, data.get(field))
+        updatable_fields = [
+            'user_name', 'user_phone', 'pickup_address', 'pickup_city', 'pickup_pincode',
+            'delivery_address', 'delivery_city', 'delivery_pincode', 'service_type',
+            'item_description', 'item_weight', 'special_instructions',
+            'estimated_cost', 'actual_cost', 'priority', 'notes', 'delivery_date',
+            'total_amount', 'deposit_paid', 'remaining_amount'
+        ]
+        
+        for field in updatable_fields:
+            if field in data and field != 'payment_status':  # Skip payment_status as we already handled it
+                old_value = getattr(request_doc, field, None)
+                new_value = data.get(field)
+                setattr(request_doc, field, new_value)
+                updated_fields[field] = {'old': old_value, 'new': new_value}
         
         # Explicitly set status if provided and not already handled
         if 'status' in data and not data.get('company_name'):
+            old_status = request_doc.status
             request_doc.status = data.get('status')
+            updated_fields['status'] = {'old': old_status, 'new': data.get('status')}
         
+        # Save with explicit flags
         request_doc.flags.ignore_version = True
+        request_doc.flags.ignore_validate = False  # We want validation
+        request_doc.flags.ignore_permissions = True
+        
+        # Save the document
         request_doc.save(ignore_permissions=True)
+        
+        # Commit to database
         frappe.db.commit()
+        
+        # Verify the update by fetching fresh data
+        fresh_doc = frappe.get_doc('Logistics Request', request_id)
         
         return {
             'success': True, 
-            'message': 'Request updated successfully', 
-            'data': request_doc.as_dict()
+            'message': 'Request updated successfully',
+            'updated_fields': updated_fields,
+            'verification': {
+                'payment_status_before': data.get('payment_status', 'N/A'),
+                'payment_status_after': fresh_doc.payment_status,
+                'updated_correctly': fresh_doc.payment_status == data.get('payment_status') if 'payment_status' in data else True
+            },
+            'data': fresh_doc.as_dict()
         }
         
     except Exception as e:
         frappe.log_error(f"Update Request Error: {str(e)}")
         frappe.db.rollback()
-        return {'success': False, 'error': str(e)} 
-
+        return {
+            'success': False, 
+            'error': str(e),
+            'traceback': frappe.get_traceback()
+        }
 # @frappe.whitelist()
 # def delete_request():
 #     """Delete a request"""
@@ -2176,9 +2327,158 @@ def get_company():
         return {'success': False, 'error': str(e)}
 
 
+# @frappe.whitelist(allow_guest=False)
+# def create_company():
+#     """Create a new company with ALL fields - Admin only"""
+#     try:
+#         ensure_session_data()
+        
+#         # Admin permission check
+#         if not check_admin_permission():
+#             return {
+#                 'success': False, 
+#                 'message': 'Access Denied: Admin permission required'
+#             }
+        
+#         data = get_request_data()
+        
+#         # Check if company already exists
+#         if frappe.db.exists('Logistics Company', {'company_name': data.get('company_name')}):
+#             return {'success': False, 'message': 'Company with this name already exists'}
+        
+#         # Validate required fields
+#         required_fields = ['company_name', 'manager_email', 'phone', 'pincode', 'location', 'address']
+#         for field in required_fields:
+#             if not data.get(field):
+#                 return {'success': False, 'message': f'{field} is required'}
+        
+#         # Create company document
+#         company_doc = frappe.new_doc('Logistics Company')
+        
+#         # Basic Details
+#         company_doc.company_name = data.get('company_name')
+#         company_doc.manager_email = data.get('manager_email')
+#         company_doc.phone = data.get('phone')
+#         company_doc.personal_contact_name = data.get('personal_contact_name', '')
+#         company_doc.pincode = data.get('pincode')
+#         company_doc.location = data.get('location')
+#         company_doc.address = data.get('address')
+#         company_doc.description = data.get('description', '')
+#         company_doc.services_offered = data.get('services_offered', '')
+        
+#         # Service Areas & Gallery (JSON)
+#         company_doc.areas_covered = process_json_array(data.get('areas_covered'), 'areas_covered')
+#         company_doc.company_gallery = process_json_array(data.get('company_gallery'), 'company_gallery')
+        
+#         # Includes (JSON)
+#         company_doc.includes = process_json_array(data.get('includes'), 'includes')
+#         company_doc.material = process_json_array(data.get('material'), 'material')
+#         company_doc.protection = process_json_array(data.get('protection'), 'protection')
+#         company_doc.furniture = process_json_array(data.get('furniture'), 'furniture')
+#         company_doc.appliances = process_json_array(data.get('appliances'), 'appliances')
+        
+#         # Fleet Quantities
+#         company_doc.swb_van_quantity = int(data.get('swb_van_quantity', 0) or 0)
+#         company_doc.mwb_van_quantity = int(data.get('mwb_van_quantity', 0) or 0)
+#         company_doc.lwb_van_quantity = int(data.get('lwb_van_quantity', 0) or 0)
+#         company_doc.xlwb_van_quantity = int(data.get('xlwb_van_quantity', 0) or 0)
+#         company_doc.mwb_luton_van_quantity = int(data.get('mwb_luton_van_quantity', 0) or 0)
+#         company_doc.lwb_luton_van_quantity = int(data.get('lwb_luton_van_quantity', 0) or 0)
+#         company_doc.tonne_7_5_lorry_quantity = int(data.get('tonne_7_5_lorry_quantity', 0) or 0)
+#         company_doc.tonne_12_lorry_quantity = int(data.get('tonne_12_lorry_quantity', 0) or 0)
+#         company_doc.tonne_18_lorry_quantity = int(data.get('tonne_18_lorry_quantity', 0) or 0)
+        
+#         # Fleet Images (JSON)
+#         company_doc.swb_van_images = process_json_array(data.get('swb_van_images'), 'swb_van_images')
+#         company_doc.mwb_van_images = process_json_array(data.get('mwb_van_images'), 'mwb_van_images')
+#         company_doc.lwb_van_images = process_json_array(data.get('lwb_van_images'), 'lwb_van_images')
+#         company_doc.xlwb_van_images = process_json_array(data.get('xlwb_van_images'), 'xlwb_van_images')
+#         company_doc.mwb_luton_van_images = process_json_array(data.get('mwb_luton_van_images'), 'mwb_luton_van_images')
+#         company_doc.lwb_luton_van_images = process_json_array(data.get('lwb_luton_van_images'), 'lwb_luton_van_images')
+#         company_doc.tonne_7_5_lorry_images = process_json_array(data.get('tonne_7_5_lorry_images'), 'tonne_7_5_lorry_images')
+#         company_doc.tonne_12_lorry_images = process_json_array(data.get('tonne_12_lorry_images'), 'tonne_12_lorry_images')
+#         company_doc.tonne_18_lorry_images = process_json_array(data.get('tonne_18_lorry_images'), 'tonne_18_lorry_images')
+        
+#         # Calculate total carrying capacity
+#         capacities = {
+#             'swb_van_quantity': 5, 'mwb_van_quantity': 8, 'lwb_van_quantity': 11,
+#             'xlwb_van_quantity': 13, 'mwb_luton_van_quantity': 17, 'lwb_luton_van_quantity': 19,
+#             'tonne_7_5_lorry_quantity': 30, 'tonne_12_lorry_quantity': 45, 'tonne_18_lorry_quantity': 55
+#         }
+#         total_capacity = sum(int(data.get(field, 0) or 0) * capacity 
+#                            for field, capacity in capacities.items())
+#         company_doc.total_carrying_capacity = total_capacity
+        
+#         # Pricing
+#         company_doc.loading_cost_per_m3 = float(data.get('loading_cost_per_m3', 0) or 0)
+#         company_doc.packing_cost_per_box = float(data.get('packing_cost_per_box', 0) or 0)
+#         company_doc.assembly_cost_per_item = float(data.get('assembly_cost_per_item', 0) or 0)
+        
+#         # Auto-calculate disassembly (50% of assembly if not provided)
+#         disassembly = float(data.get('disassembly_cost_per_item', 0) or 0)
+#         if not disassembly and company_doc.assembly_cost_per_item:
+#             disassembly = company_doc.assembly_cost_per_item * 0.5
+#         company_doc.disassembly_cost_per_item = disassembly
+        
+#         company_doc.cost_per_mile_under_25 = float(data.get('cost_per_mile_under_25', 0) or 0)
+#         company_doc.cost_per_mile_over_25 = float(data.get('cost_per_mile_over_25', 0) or 0)
+        
+#         # Subscription
+#         company_doc.subscription_plan = data.get('subscription_plan', 'Free')
+#         company_doc.subscription_start_date = data.get('subscription_start_date')
+#         company_doc.subscription_end_date = data.get('subscription_end_date')
+#         company_doc.requests_viewed_this_month = 0
+#         company_doc.is_active = int(data.get('is_active', 1))
+        
+#         # Ratings (initialized to 0)
+#         company_doc.average_rating = 0
+#         company_doc.total_ratings = 0
+        
+#         # Timestamps
+#         company_doc.created_at = datetime.now()
+#         company_doc.updated_at = datetime.now()
+        
+#         # Insert
+#         company_doc.flags.ignore_version = True
+#         company_doc.insert(ignore_permissions=True)
+#         frappe.db.commit()
+        
+#         # Parse response
+#         result = company_doc.as_dict()
+#         parse_company_json_fields(result)
+        
+#         return {
+#             'success': True, 
+#             'message': 'Company created successfully', 
+#             'data': result
+#         }
+        
+#     except Exception as e:
+#         frappe.log_error(f"Create Company Error: {str(e)}")
+#         frappe.db.rollback()
+#         return {'success': False, 'error': str(e)}
+
+
 @frappe.whitelist(allow_guest=False)
 def create_company():
-    """Create a new company with ALL fields - Admin only"""
+    """
+    Create a new company with ALL fields - Admin only
+    
+    AUTOMATIC USER CREATION:
+    If manager_email doesn't exist as a user, a new Logistics Manager user will be created automatically.
+    
+    Required fields for NEW USER (if manager_email doesn't exist):
+    - manager_email (will become user email)
+    - password (for the new user)
+    - phone (for the new user)
+    - personal_contact_name (will become user full_name)
+    
+    Required fields for COMPANY:
+    - company_name, pincode, location, address
+    
+    Optional user fields (if creating new user):
+    - user_city, user_state, user_address, user_pincode
+    """
     try:
         ensure_session_data()
         
@@ -2191,24 +2491,126 @@ def create_company():
         
         data = get_request_data()
         
-        # Check if company already exists
+        # ===== VALIDATE REQUIRED COMPANY FIELDS =====
+        required_company_fields = ['company_name', 'manager_email', 'pincode', 'location', 'address']
+        missing_fields = [field for field in required_company_fields if not data.get(field)]
+        
+        if missing_fields:
+            return {
+                'success': False, 
+                'message': f'Missing required fields: {", ".join(missing_fields)}'
+            }
+        
+        manager_email = data.get('manager_email')
+        
+        # ===== CHECK IF COMPANY NAME ALREADY EXISTS =====
         if frappe.db.exists('Logistics Company', {'company_name': data.get('company_name')}):
-            return {'success': False, 'message': 'Company with this name already exists'}
+            return {
+                'success': False, 
+                'message': f'Company "{data.get("company_name")}" already exists'
+            }
         
-        # Validate required fields
-        required_fields = ['company_name', 'manager_email', 'phone', 'pincode', 'location', 'address']
-        for field in required_fields:
-            if not data.get(field):
-                return {'success': False, 'message': f'{field} is required'}
+        # ===== CHECK IF USER EXISTS =====
+        user_exists = frappe.db.get_value('LocalMoves User', 
+            {'email': manager_email}, 
+            ['name', 'role', 'is_active', 'full_name', 'phone'], 
+            as_dict=True)
         
-        # Create company document
+        user_created = False
+        user_id = None
+        
+        if not user_exists:
+            # ===== USER DOESN'T EXIST - CREATE NEW USER =====
+            
+            # Validate required fields for new user
+            required_user_fields = ['password', 'phone']
+            missing_user_fields = [f for f in required_user_fields if not data.get(f)]
+            
+            if missing_user_fields:
+                return {
+                    'success': False,
+                    'message': f'User with email "{manager_email}" does not exist. To create new user, provide: {", ".join(missing_user_fields)}'
+                }
+            
+            # Check if phone already exists
+            if frappe.db.exists('LocalMoves User', {'phone': data.get('phone')}):
+                return {
+                    'success': False, 
+                    'message': f'User with phone "{data.get("phone")}" already exists'
+                }
+            
+            # Create new user
+            user_doc = frappe.new_doc('LocalMoves User')
+            user_doc.email = manager_email
+            user_doc.full_name = data.get('personal_contact_name') or data.get('company_name')
+            user_doc.phone = data.get('phone')
+            user_doc.password = data.get('password')
+            user_doc.role = 'Logistics Manager'  # FIXED ROLE
+            
+            # Optional user fields
+            user_doc.city = data.get('user_city', '')
+            user_doc.state = data.get('user_state', '')
+            user_doc.address = data.get('user_address', data.get('address', ''))
+            user_doc.pincode = data.get('user_pincode', data.get('pincode', ''))
+            user_doc.is_active = 1
+            user_doc.is_phone_verified = 0
+            
+            # Insert user
+            user_doc.flags.ignore_version = True
+            user_doc.insert(ignore_permissions=True)
+            
+            user_created = True
+            user_id = user_doc.name
+            
+            frappe.msgprint(f"New Logistics Manager user created: {manager_email}")
+        
+        else:
+            # ===== USER EXISTS - VALIDATE =====
+            
+            # Check if user is active
+            if not user_exists.is_active:
+                return {
+                    'success': False,
+                    'message': f'User account "{manager_email}" is inactive'
+                }
+            
+            # Check if user is Logistics Manager
+            if user_exists.role != 'Logistics Manager':
+                return {
+                    'success': False,
+                    'message': f'User "{manager_email}" must have role "Logistics Manager", current role is: {user_exists.role}'
+                }
+            
+            # Check if user already has a company
+            existing_company = frappe.db.get_value('Logistics Company', 
+                {'manager_email': manager_email}, 
+                'company_name')
+            
+            if existing_company:
+                return {
+                    'success': False,
+                    'message': f'User "{manager_email}" already has a company: {existing_company}'
+                }
+            
+            user_id = user_exists.name
+        
+        # ===== CREATE COMPANY =====
+        
         company_doc = frappe.new_doc('Logistics Company')
+        
+        # Link to user
+        company_doc.manager_email = manager_email
+        
+        # Use existing user data if available, else use provided data
+        if user_exists:
+            company_doc.personal_contact_name = data.get('personal_contact_name', user_exists.full_name)
+            company_doc.phone = data.get('phone', user_exists.phone)
+        else:
+            company_doc.personal_contact_name = data.get('personal_contact_name') or data.get('company_name')
+            company_doc.phone = data.get('phone')
         
         # Basic Details
         company_doc.company_name = data.get('company_name')
-        company_doc.manager_email = data.get('manager_email')
-        company_doc.phone = data.get('phone')
-        company_doc.personal_contact_name = data.get('personal_contact_name', '')
         company_doc.pincode = data.get('pincode')
         company_doc.location = data.get('location')
         company_doc.address = data.get('address')
@@ -2290,23 +2692,43 @@ def create_company():
         # Insert
         company_doc.flags.ignore_version = True
         company_doc.insert(ignore_permissions=True)
+        
+        # Commit both in same transaction
         frappe.db.commit()
         
         # Parse response
         result = company_doc.as_dict()
         parse_company_json_fields(result)
         
-        return {
+        response = {
             'success': True, 
-            'message': 'Company created successfully', 
+            'message': f'Company created successfully{"and new user created" if user_created else ""}',
             'data': result
         }
         
+        if user_created:
+            response['user_created'] = {
+                'user_id': user_id,
+                'email': manager_email,
+                'role': 'Logistics Manager',
+                'message': 'New Logistics Manager user was created automatically'
+            }
+        
+        return response
+        
     except Exception as e:
-        frappe.log_error(f"Create Company Error: {str(e)}")
+        import traceback
+        error_trace = traceback.format_exc()
+        frappe.log_error(
+            title="Create Company Error",
+            message=f"Error: {str(e)}\n\nTraceback:\n{error_trace}"
+        )
         frappe.db.rollback()
-        return {'success': False, 'error': str(e)}
-
+        return {
+            'success': False, 
+            'error': str(e),
+            'traceback': error_trace
+        }
 
 @frappe.whitelist(allow_guest=False)
 def update_company():
@@ -3169,6 +3591,744 @@ def get_user_dashboard():
         return {"success": False, "message": "Failed to fetch dashboard data"}
 
 
+
+# ===== INVENTORY CATEGORY CRUD OPERATIONS (Admin Only) =====
+# Add these functions to your dashboard.py file
+
+@frappe.whitelist(allow_guest=False)
+def get_all_inventory_categories():
+    """Get all inventory categories including empty ones"""
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to view categories'
+            }
+        
+        # Get categories from items (categories with items)
+        categories_with_items = frappe.db.sql("""
+            SELECT 
+                category,
+                COUNT(*) as item_count,
+                SUM(average_volume) as total_volume,
+                AVG(average_volume) as avg_volume,
+                MIN(creation) as first_item_created,
+                MAX(modified) as last_item_modified
+            FROM `tabMoving Inventory Item`
+            GROUP BY category
+            ORDER BY category ASC
+        """, as_dict=True)
+        
+        # Get registered categories (may include empty ones)
+        config = get_system_config_from_db()
+        registered_categories = config.get('inventory_categories', [])
+        
+        # Merge both lists
+        all_categories = {}
+        
+        # Add categories with items
+        for cat in categories_with_items:
+            all_categories[cat['category']] = cat
+        
+        # Add registered categories (empty ones)
+        for cat_name in registered_categories:
+            if cat_name not in all_categories:
+                all_categories[cat_name] = {
+                    'category': cat_name,
+                    'item_count': 0,
+                    'total_volume': 0,
+                    'avg_volume': 0,
+                    'first_item_created': None,
+                    'last_item_modified': None
+                }
+        
+        # Convert to sorted list
+        final_list = sorted(all_categories.values(), key=lambda x: x['category'])
+        
+        return {
+            'success': True,
+            'data': final_list,
+            'count': len(final_list)
+        }
+    except Exception as e:
+        frappe.log_error(f"Get Inventory Categories Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+# @frappe.whitelist(allow_guest=False)
+# def create_inventory_category():
+#     """
+#     Create a new inventory category by adding a placeholder item
+#     The category will be created when the first item is added to it
+    
+#     Required fields:
+#     - category_name: Name of the new category
+#     """
+#     try:
+#         ensure_session_data()
+        
+#         # Permission check
+#         if not check_admin_permission():
+#             return {
+#                 'success': False, 
+#                 'message': 'Access Denied: You do not have permission to create categories'
+#             }
+        
+#         data = get_request_data()
+#         category_name = data.get('category_name')
+        
+#         if not category_name:
+#             return {'success': False, 'message': 'category_name is required'}
+        
+#         # Check if category already exists
+#         existing_category = frappe.db.sql("""
+#             SELECT category 
+#             FROM `tabMoving Inventory Item`
+#             WHERE category = %s
+#             LIMIT 1
+#         """, (category_name,))
+        
+#         if existing_category:
+#             return {
+#                 'success': False, 
+#                 'message': f'Category "{category_name}" already exists'
+#             }
+        
+#         # Create a placeholder item to establish the category
+#         # You can customize this or make it optional
+#         placeholder_item = frappe.new_doc('Moving Inventory Item')
+#         placeholder_item.category = category_name
+#         placeholder_item.item_name = f"[Placeholder] {category_name} Item"
+#         placeholder_item.average_volume = 0.0
+#         placeholder_item.unit = 'm³'
+        
+#         placeholder_item.flags.ignore_version = True
+#         placeholder_item.insert(ignore_permissions=True)
+#         frappe.db.commit()
+        
+#         return {
+#             'success': True,
+#             'message': f'Category "{category_name}" created successfully',
+#             'data': {
+#                 'category_name': category_name,
+#                 'placeholder_item': placeholder_item.name,
+#                 'note': 'A placeholder item was created. You can now add items to this category or delete the placeholder.'
+#             }
+#         }
+        
+#     except Exception as e:
+#         frappe.log_error(f"Create Inventory Category Error: {str(e)}")
+#         frappe.db.rollback()
+#         return {'success': False, 'error': str(e)}
+
+
+
+
+# ===== REMOVE THE NEED FOR create_inventory_category ENDPOINT =====
+# This function is now OPTIONAL - categories are created automatically when adding items
+
+@frappe.whitelist(allow_guest=False)
+def create_inventory_category():
+    """
+    Create a new inventory category WITHOUT creating any items
+    Just registers the category name in the system
+    
+    Required fields:
+    - category_name: Name of the new category
+    """
+    try:
+        ensure_session_data()
+        
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to create categories'
+            }
+        
+        data = get_request_data()
+        category_name = data.get('category_name')
+        
+        if not category_name:
+            return {'success': False, 'message': 'category_name is required'}
+        
+        category_name = category_name.strip()
+        
+        # Check if category already exists
+        existing_category = frappe.db.exists('Moving Inventory Item', {'category': category_name})
+        
+        if existing_category:
+            item_count = frappe.db.count('Moving Inventory Item', {'category': category_name})
+            return {
+                'success': False, 
+                'message': f'Category "{category_name}" already exists with {item_count} items'
+            }
+        
+        # PURE CATEGORY CREATION:
+        # Store category in a separate tracking table or system config
+        # This allows categories to exist WITHOUT items
+        
+        # Option 1: Store in System Configuration
+        config = get_system_config_from_db()
+        if 'inventory_categories' not in config:
+            config['inventory_categories'] = []
+        
+        if category_name not in config['inventory_categories']:
+            config['inventory_categories'].append(category_name)
+            
+            # Update config
+            frappe.db.sql("""
+                UPDATE `tabSystem Configuration`
+                SET config_data = %s, updated_at = %s
+                WHERE name = 'admin_config'
+            """, (json.dumps(config), datetime.now()))
+            
+            frappe.db.commit()
+            
+            return {
+                'success': True,
+                'message': f'Category "{category_name}" created successfully',
+                'data': {
+                    'category_name': category_name,
+                    'item_count': 0,
+                    'note': 'Category created without items. Add items anytime.'
+                }
+            }
+        else:
+            return {
+                'success': False,
+                'message': f'Category "{category_name}" already registered'
+            }
+        
+    except Exception as e:
+        frappe.log_error(f"Create Category Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+def create_inventory_item_internal(category, item_name, average_volume, unit='m³'):
+    """
+    Internal function to create inventory item
+    Used by other functions to avoid code duplication
+    """
+    try:
+        item_doc = frappe.new_doc('Moving Inventory Item')
+        item_doc.category = category
+        item_doc.item_name = item_name
+        item_doc.average_volume = float(average_volume)
+        item_doc.unit = unit
+        
+        item_doc.flags.ignore_version = True
+        item_doc.insert(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True,
+            'data': item_doc.as_dict()
+        }
+    except Exception as e:
+        frappe.db.rollback()
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+
+# ===== SIMPLIFIED BULK UPLOAD WITH AUTO-CATEGORY =====
+
+@frappe.whitelist(allow_guest=False)
+def bulk_create_inventory_items():
+    """
+    Bulk create inventory items with AUTOMATIC category creation
+    Categories will be created as needed - no pre-setup required!
+    
+    Request format:
+    {
+      "items": [
+        {"category": "New Category", "item_name": "Item 1", "average_volume": 1.5},
+        {"category": "Another New Category", "item_name": "Item 2", "average_volume": 2.0}
+      ]
+    }
+    """
+    try:
+        ensure_session_data()
+        
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to create inventory items'
+            }
+        
+        data = get_request_data()
+        items = data.get('items')
+        
+        if not items:
+            return {'success': False, 'message': 'items array is required'}
+        
+        import json
+        if isinstance(items, str):
+            items = json.loads(items)
+        
+        created = 0
+        errors = []
+        created_items = []
+        new_categories = set()
+        
+        for item in items:
+            try:
+                # Validate required fields
+                if not item.get('category') or not item.get('item_name') or not item.get('average_volume'):
+                    errors.append({
+                        'item': item.get('item_name', 'Unknown'),
+                        'error': 'Missing required fields (category, item_name, average_volume)'
+                    })
+                    continue
+                
+                category = item.get('category').strip()
+                item_name = item.get('item_name').strip()
+                
+                # Check if category is new
+                if not frappe.db.exists('Moving Inventory Item', {'category': category}):
+                    new_categories.add(category)
+                
+                # Check if already exists
+                if frappe.db.exists('Moving Inventory Item', {
+                    'category': category,
+                    'item_name': item_name
+                }):
+                    errors.append({
+                        'item': item_name,
+                        'error': f'Item already exists in category "{category}"'
+                    })
+                    continue
+                
+                # Create item
+                item_doc = frappe.new_doc('Moving Inventory Item')
+                item_doc.category = category
+                item_doc.item_name = item_name
+                item_doc.average_volume = float(item.get('average_volume'))
+                item_doc.unit = item.get('unit', 'm³')
+                
+                item_doc.flags.ignore_version = True
+                item_doc.insert(ignore_permissions=True)
+                created += 1
+                created_items.append(item_doc.as_dict())
+                
+            except Exception as e:
+                errors.append({
+                    'item': item.get('item_name', 'Unknown'),
+                    'error': str(e)
+                })
+        
+        frappe.db.commit()
+        
+        response = {
+            'success': True,
+            'message': f'Bulk upload completed. Created {created} items, {len(errors)} errors',
+            'created_count': created,
+            'error_count': len(errors),
+            'created_items': created_items,
+            'errors': errors
+        }
+        
+        if new_categories:
+            response['new_categories_created'] = list(new_categories)
+            response['new_categories_count'] = len(new_categories)
+            response['message'] += f'. {len(new_categories)} new categories created automatically.'
+        
+        return response
+        
+    except Exception as e:
+        frappe.log_error(f"Bulk Create Inventory Items Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist(allow_guest=False)
+def rename_inventory_category():
+    """
+    Rename an existing category by updating all items in that category
+    
+    Required fields:
+    - old_category_name: Current category name
+    - new_category_name: New category name
+    """
+    try:
+        ensure_session_data()
+        
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to rename categories'
+            }
+        
+        data = get_request_data()
+        old_category_name = data.get('old_category_name')
+        new_category_name = data.get('new_category_name')
+        
+        if not old_category_name or not new_category_name:
+            return {
+                'success': False, 
+                'message': 'Both old_category_name and new_category_name are required'
+            }
+        
+        # Check if old category exists
+        old_category_items = frappe.db.sql("""
+            SELECT name
+            FROM `tabMoving Inventory Item`
+            WHERE category = %s
+        """, (old_category_name,), as_dict=True)
+        
+        if not old_category_items:
+            return {
+                'success': False, 
+                'message': f'Category "{old_category_name}" does not exist'
+            }
+        
+        # Check if new category already exists
+        new_category_exists = frappe.db.sql("""
+            SELECT category 
+            FROM `tabMoving Inventory Item`
+            WHERE category = %s
+            LIMIT 1
+        """, (new_category_name,))
+        
+        if new_category_exists:
+            return {
+                'success': False, 
+                'message': f'Category "{new_category_name}" already exists. Cannot rename to existing category.'
+            }
+        
+        # Update all items in the old category
+        updated_count = 0
+        for item in old_category_items:
+            item_doc = frappe.get_doc('Moving Inventory Item', item['name'])
+            item_doc.category = new_category_name
+            item_doc.flags.ignore_version = True
+            item_doc.save(ignore_permissions=True)
+            updated_count += 1
+        
+        frappe.db.commit()
+        
+        return {
+            'success': True,
+            'message': f'Category renamed successfully from "{old_category_name}" to "{new_category_name}"',
+            'data': {
+                'old_category': old_category_name,
+                'new_category': new_category_name,
+                'items_updated': updated_count
+            }
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Rename Inventory Category Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def delete_inventory_category():
+    """
+    Delete an entire category and all items in it
+    
+    Required fields:
+    - category_name: Name of the category to delete
+    - confirm: Must be true to confirm deletion
+    """
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to delete categories'
+            }
+        
+        data = get_request_data()
+        category_name = data.get('category_name')
+        confirm = data.get('confirm')
+        
+        if not category_name:
+            return {'success': False, 'message': 'category_name is required'}
+        
+        if not confirm or str(confirm).lower() != 'true':
+            # Get item count for warning
+            item_count = frappe.db.count('Moving Inventory Item', {'category': category_name})
+            return {
+                'success': False,
+                'message': f'Confirmation required. This will delete {item_count} items in category "{category_name}"',
+                'requires_confirmation': True,
+                'item_count': item_count,
+                'instruction': 'Set "confirm": true to proceed with deletion'
+            }
+        
+        # Get all items in the category
+        category_items = frappe.get_all('Moving Inventory Item',
+            filters={'category': category_name},
+            pluck='name'
+        )
+        
+        if not category_items:
+            return {
+                'success': False, 
+                'message': f'Category "{category_name}" does not exist or has no items'
+            }
+        
+        # Delete all items
+        deleted_count = 0
+        for item_name in category_items:
+            frappe.delete_doc('Moving Inventory Item', item_name, 
+                            ignore_permissions=True, force=True)
+            deleted_count += 1
+        
+        frappe.db.commit()
+        
+        return {
+            'success': True,
+            'message': f'Category "{category_name}" and all {deleted_count} items deleted successfully',
+            'data': {
+                'category_name': category_name,
+                'items_deleted': deleted_count
+            }
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Delete Inventory Category Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def merge_inventory_categories():
+    """
+    Merge two categories by moving all items from source to target category
+    
+    Required fields:
+    - source_category: Category to merge from (will be deleted)
+    - target_category: Category to merge into (will remain)
+    """
+    try:
+        ensure_session_data()
+        
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to merge categories'
+            }
+        
+        data = get_request_data()
+        source_category = data.get('source_category')
+        target_category = data.get('target_category')
+        
+        if not source_category or not target_category:
+            return {
+                'success': False, 
+                'message': 'Both source_category and target_category are required'
+            }
+        
+        if source_category == target_category:
+            return {
+                'success': False, 
+                'message': 'Source and target categories cannot be the same'
+            }
+        
+        # Check if source category exists
+        source_items = frappe.get_all('Moving Inventory Item',
+            filters={'category': source_category},
+            pluck='name'
+        )
+        
+        if not source_items:
+            return {
+                'success': False, 
+                'message': f'Source category "{source_category}" does not exist or has no items'
+            }
+        
+        # Check if target category exists
+        target_exists = frappe.db.exists('Moving Inventory Item', {'category': target_category})
+        
+        if not target_exists:
+            return {
+                'success': False, 
+                'message': f'Target category "{target_category}" does not exist. Create it first.'
+            }
+        
+        # Move all items from source to target
+        moved_count = 0
+        for item_name in source_items:
+            item_doc = frappe.get_doc('Moving Inventory Item', item_name)
+            item_doc.category = target_category
+            item_doc.flags.ignore_version = True
+            item_doc.save(ignore_permissions=True)
+            moved_count += 1
+        
+        frappe.db.commit()
+        
+        return {
+            'success': True,
+            'message': f'Successfully merged "{source_category}" into "{target_category}"',
+            'data': {
+                'source_category': source_category,
+                'target_category': target_category,
+                'items_moved': moved_count
+            }
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Merge Inventory Categories Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def get_category_details():
+    """
+    Get detailed information about a specific category
+    
+    Required fields:
+    - category_name: Name of the category
+    """
+    try:
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to view category details'
+            }
+        
+        data = get_request_data()
+        category_name = data.get('category_name')
+        
+        if not category_name:
+            return {'success': False, 'message': 'category_name is required'}
+        
+        # Get category statistics
+        stats = frappe.db.sql("""
+            SELECT 
+                COUNT(*) as item_count,
+                SUM(average_volume) as total_volume,
+                AVG(average_volume) as avg_volume,
+                MIN(average_volume) as min_volume,
+                MAX(average_volume) as max_volume,
+                MIN(creation) as first_item_created,
+                MAX(modified) as last_item_modified
+            FROM `tabMoving Inventory Item`
+            WHERE category = %s
+        """, (category_name,), as_dict=True)
+        
+        if not stats or stats[0]['item_count'] == 0:
+            return {
+                'success': False, 
+                'message': f'Category "{category_name}" does not exist or has no items'
+            }
+        
+        # Get all items in the category
+        items = frappe.get_all('Moving Inventory Item',
+            filters={'category': category_name},
+            fields=['name', 'item_name', 'average_volume', 'unit', 'creation', 'modified'],
+            order_by='item_name asc'
+        )
+        
+        # Get top 5 largest items
+        largest_items = frappe.get_all('Moving Inventory Item',
+            filters={'category': category_name},
+            fields=['item_name', 'average_volume'],
+            order_by='average_volume desc',
+            limit=5
+        )
+        
+        # Get top 5 smallest items
+        smallest_items = frappe.get_all('Moving Inventory Item',
+            filters={'category': category_name},
+            fields=['item_name', 'average_volume'],
+            order_by='average_volume asc',
+            limit=5
+        )
+        
+        return {
+            'success': True,
+            'data': {
+                'category_name': category_name,
+                'statistics': stats[0],
+                'items': items,
+                'largest_items': largest_items,
+                'smallest_items': smallest_items
+            }
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Get Category Details Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+# ===== UPDATE EXISTING INVENTORY ITEM FUNCTIONS TO SUPPORT DYNAMIC CATEGORIES =====
+
+@frappe.whitelist(allow_guest=False)
+def create_inventory_item_v2():
+    """
+    Create a new inventory item with dynamic category support
+    If the category doesn't exist, it will be created automatically
+    """
+    try:
+        ensure_session_data()
+        
+        # Permission check
+        if not check_admin_permission():
+            return {
+                'success': False, 
+                'message': 'Access Denied: You do not have permission to create inventory items'
+            }
+        
+        data = get_request_data()
+        
+        # Validate required fields
+        required_fields = ['category', 'item_name', 'average_volume']
+        for field in required_fields:
+            if not data.get(field):
+                return {'success': False, 'message': f'{field} is required'}
+        
+        # NO CATEGORY VALIDATION - Allow any category name
+        category = data.get('category')
+        
+        # Check if item already exists
+        if frappe.db.exists('Moving Inventory Item', {'item_name': data.get('item_name')}):
+            return {'success': False, 'message': 'Item with this name already exists'}
+        
+        # Check if this is a new category
+        category_exists = frappe.db.exists('Moving Inventory Item', {'category': category})
+        is_new_category = not category_exists
+        
+        # Create new item
+        item_doc = frappe.new_doc('Moving Inventory Item')
+        item_doc.category = category
+        item_doc.item_name = data.get('item_name')
+        item_doc.average_volume = float(data.get('average_volume'))
+        item_doc.unit = data.get('unit', 'm³')
+        
+        item_doc.flags.ignore_version = True
+        item_doc.insert(ignore_permissions=True)
+        frappe.db.commit()
+        
+        response = {
+            'success': True, 
+            'message': 'Inventory item created successfully', 
+            'data': item_doc.as_dict()
+        }
+        
+        if is_new_category:
+            response['category_created'] = True
+            response['message'] += f' (New category "{category}" was created)'
+        
+        return response
+        
+    except ValueError:
+        return {'success': False, 'message': 'average_volume must be a valid number'}
+    except Exception as e:
+        frappe.log_error(f"Create Inventory Item V2 Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
 # ===== INVENTORY CRUD OPERATIONS (Admin Only) =====
 # Add these functions to your dashboard.py file
 
@@ -3269,11 +4429,11 @@ def create_inventory_item():
             'Garden / Garage / Loft', 
             'Bedroom'
         ]
-        if data.get('category') not in valid_categories:
-            return {
-                'success': False, 
-                'message': f'Invalid category. Must be one of: {", ".join(valid_categories)}'
-            }
+        # if data.get('category') not in valid_categories:
+        #     return {
+        #         'success': False, 
+        #         'message': f'Invalid category. Must be one of: {", ".join(valid_categories)}'
+        #     }
         
         # Check if item already exists
         if frappe.db.exists('Moving Inventory Item', {'item_name': data.get('item_name')}):

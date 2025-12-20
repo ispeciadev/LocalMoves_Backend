@@ -1,5 +1,5 @@
-
 from __future__ import unicode_literals
+
 
 
 app_name = "localmoves"
@@ -111,6 +111,16 @@ override_whitelisted_methods = {
     "localmoves.api.request.get_quick_subscription_info": "localmoves.api.request.get_quick_subscription_info",
 
 
+    #category
+    "localmoves.api.dashboard.get_all_inventory_categories": "localmoves.api.dashboard.get_all_inventory_categories",
+    "localmoves.api.dashboard.create_inventory_category": "localmoves.api.dashboard.create_inventory_category",
+    "localmoves.api.dashboard.rename_inventory_category": "localmoves.api.dashboard.rename_inventory_category",
+    "localmoves.api.dashboard.delete_inventory_category": "localmoves.api.dashboard.delete_inventory_category",
+    "localmoves.api.dashboard.merge_inventory_categories": "localmoves.api.dashboard.merge_inventory_categories",
+    "localmoves.api.dashboard.get_category_details": "localmoves.api.dashboard.get_category_details",
+    "localmoves.api.dashboard.create_inventory_item_v2": "localmoves.api.dashboard.create_inventory_item_v2",
+
+
  # NEW: Request Payment APIs
     "localmoves.api.request_payment.create_request_with_payment": "localmoves.api.request_payment.create_request_with_payment",
     "localmoves.api.request_payment.process_deposit_payment": "localmoves.api.request_payment.process_deposit_payment",
@@ -151,3 +161,4 @@ override_methods = {
 website_route_rules = [
     {"from_route": "/api/method/*", "to_route": "api/method/*", "condition": "no_csrf"}
 ]
+

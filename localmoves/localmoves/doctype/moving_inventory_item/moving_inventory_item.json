@@ -1,7 +1,7 @@
 {
  "actions": [],
  "allow_rename": 1,
- "autoname": "format:{category}-{item_name}",  
+ "autoname": "format:{category}-{item_name}",
  "creation": "2025-01-01 12:00:00",
  "doctype": "DocType",
  "editable_grid": 1,
@@ -16,11 +16,10 @@
  "fields": [
   {
    "fieldname": "category",
-   "fieldtype": "Select",
+   "fieldtype": "Data",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Category",
-   "options": "Living Room\nKitchen\nOther / Bathroom / Hallway\nGarden / Garage / Loft\nBedroom\nOffice\nGym",
    "reqd": 1
   },
   {
@@ -38,12 +37,12 @@
    "fieldname": "average_volume",
    "fieldtype": "Float",
    "in_list_view": 1,
-   "label": "Average Volume (m³)",
+   "label": "Average Volume (m\u00b3)",
    "precision": "2",
    "reqd": 1
   },
   {
-   "default": "m³",
+   "default": "m\u00b3",
    "fieldname": "unit",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -53,11 +52,11 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-12-18 11:46:02.741755",
+ "modified": "2025-12-20 12:59:09.525299",
  "modified_by": "Administrator",
  "module": "Localmoves",
  "name": "Moving Inventory Item",
- "naming_rule": "Expression", 
+ "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {
