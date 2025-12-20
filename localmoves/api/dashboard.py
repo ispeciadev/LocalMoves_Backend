@@ -4030,6 +4030,7 @@ def rename_inventory_category():
 def delete_inventory_category():
     """
     Delete an entire category and all items in it
+    Also removes empty categories from System Configuration
     
     Required fields:
     - category_name: Name of the category to delete
@@ -4050,9 +4051,10 @@ def delete_inventory_category():
         if not category_name:
             return {'success': False, 'message': 'category_name is required'}
         
+        # Get item count
+        item_count = frappe.db.count('Moving Inventory Item', {'category': category_name})
+        
         if not confirm or str(confirm).lower() != 'true':
-            # Get item count for warning
-            item_count = frappe.db.count('Moving Inventory Item', {'category': category_name})
             return {
                 'success': False,
                 'message': f'Confirmation required. This will delete {item_count} items in category "{category_name}"',
@@ -4061,30 +4063,47 @@ def delete_inventory_category():
                 'instruction': 'Set "confirm": true to proceed with deletion'
             }
         
-        # Get all items in the category
-        category_items = frappe.get_all('Moving Inventory Item',
-            filters={'category': category_name},
-            pluck='name'
-        )
-        
-        if not category_items:
-            return {
-                'success': False, 
-                'message': f'Category "{category_name}" does not exist or has no items'
-            }
-        
-        # Delete all items
         deleted_count = 0
-        for item_name in category_items:
-            frappe.delete_doc('Moving Inventory Item', item_name, 
-                            ignore_permissions=True, force=True)
-            deleted_count += 1
+        
+        # Delete items if any exist
+        if item_count > 0:
+            category_items = frappe.get_all('Moving Inventory Item',
+                filters={'category': category_name},
+                pluck='name'
+            )
+            
+            for item_name in category_items:
+                frappe.delete_doc('Moving Inventory Item', item_name, 
+                                ignore_permissions=True, force=True)
+                deleted_count += 1
+        
+        # ALSO remove from System Configuration (for empty categories)
+        try:
+            config = get_system_config_from_db()
+            if 'inventory_categories' in config:
+                if category_name in config['inventory_categories']:
+                    config['inventory_categories'].remove(category_name)
+                    
+                    # Update config
+                    frappe.db.sql("""
+                        UPDATE `tabSystem Configuration`
+                        SET config_data = %s, updated_at = %s
+                        WHERE name = 'admin_config'
+                    """, (json.dumps(config), datetime.now()))
+        except Exception as e:
+            frappe.log_error(f"Error removing category from config: {str(e)}")
         
         frappe.db.commit()
         
+        message = f'Category "{category_name}" deleted successfully'
+        if deleted_count > 0:
+            message += f' ({deleted_count} items deleted)'
+        else:
+            message += ' (empty category removed)'
+        
         return {
             'success': True,
-            'message': f'Category "{category_name}" and all {deleted_count} items deleted successfully',
+            'message': message,
             'data': {
                 'category_name': category_name,
                 'items_deleted': deleted_count
@@ -4095,8 +4114,8 @@ def delete_inventory_category():
         frappe.log_error(f"Delete Inventory Category Error: {str(e)}")
         frappe.db.rollback()
         return {'success': False, 'error': str(e)}
-
-
+    
+    
 @frappe.whitelist(allow_guest=False)
 def merge_inventory_categories():
     """
@@ -4417,32 +4436,32 @@ def create_inventory_item():
         
         # Validate required fields
         required_fields = ['category', 'item_name', 'average_volume']
-        for field in required_fields:
-            if not data.get(field):
-                return {'success': False, 'message': f'{field} is required'}
-        
-        # Validate category
-        valid_categories = [
-            'Living Room', 
-            'Kitchen', 
-            'Other / Bathroom / Hallway', 
-            'Garden / Garage / Loft', 
-            'Bedroom'
-        ]
-        # if data.get('category') not in valid_categories:
-        #     return {
-        #         'success': False, 
-        #         'message': f'Invalid category. Must be one of: {", ".join(valid_categories)}'
-        #     }
-        
-        # Check if item already exists
-        if frappe.db.exists('Moving Inventory Item', {'item_name': data.get('item_name')}):
-            return {'success': False, 'message': 'Item with this name already exists'}
-        
-        # Create new item
-        item_doc = frappe.new_doc('Moving Inventory Item')
-        item_doc.category = data.get('category')
-        item_doc.item_name = data.get('item_name')
+# #         for field in required_fields:
+# #             if not data.get(field):
+# #                 return {'success': False, 'message': f'{field} is required'}
+# #         
+# #         # Validate category
+# #         valid_categories = [
+# #             'Living Room', 
+# #             'Kitchen', 
+# #             'Other / Bathroom / Hallway', 
+# #             'Garden / Garage / Loft', 
+# #             'Bedroom'
+# #         ]
+# #         # if data.get('category') not in valid_categories:
+# #         #     return {
+# #         #         'success': False, 
+# #         #         'message': f'Invalid category. Must be one of: {", ".join(valid_categories)}'
+# #         #     }
+# #         
+# #         # Check if item already exists
+# #         if frappe.db.exists('Moving Inventory Item', {'item_name': data.get('item_name')}):
+# #             return {'success': False, 'message': 'Item with this name already exists'}
+# #         
+# #         # Create new item
+# #         item_doc = frappe.new_doc('Moving Inventory Item')
+# #         item_doc.category = data.get('category')
+# #         item_doc.item_name = data.get('item_name')
         item_doc.average_volume = float(data.get('average_volume'))
         item_doc.unit = data.get('unit', 'm³')
         
@@ -4487,32 +4506,32 @@ def update_inventory_item():
         
         item_doc = frappe.get_doc('Moving Inventory Item', item_name)
         
-        updated_fields = []
-        
-        # Update category
-        if 'category' in data and data.get('category'):
-            valid_categories = [
-                'Living Room', 
-                'Kitchen', 
-                'Other / Bathroom / Hallway', 
-                'Garden / Garage / Loft', 
-                'Bedroom'
-            ]
-            if data.get('category') not in valid_categories:
-                return {
-                    'success': False, 
-                    'message': f'Invalid category. Must be one of: {", ".join(valid_categories)}'
-                }
-            item_doc.category = data.get('category')
-            updated_fields.append('category')
-        
-        # Update average_volume
-        if 'average_volume' in data and data.get('average_volume'):
-            try:
-                item_doc.average_volume = float(data.get('average_volume'))
-                updated_fields.append('average_volume')
-            except ValueError:
-                return {'success': False, 'message': 'average_volume must be a valid number'}
+#         updated_fields = []
+#         
+#         # Update category
+#         if 'category' in data and data.get('category'):
+#             valid_categories = [
+#                 'Living Room', 
+#                 'Kitchen', 
+#                 'Other / Bathroom / Hallway', 
+#                 'Garden / Garage / Loft', 
+#                 'Bedroom'
+#             ]
+#             if data.get('category') not in valid_categories:
+#                 return {
+#                     'success': False, 
+#                     'message': f'Invalid category. Must be one of: {", ".join(valid_categories)}'
+#                 }
+#             item_doc.category = data.get('category')
+#             updated_fields.append('category')
+#         
+#         # Update average_volume
+#         if 'average_volume' in data and data.get('average_volume'):
+#             try:
+#                 item_doc.average_volume = float(data.get('average_volume'))
+#                 updated_fields.append('average_volume')
+#             except ValueError:
+#                 return {'success': False, 'message': 'average_volume must be a valid number'}
         
         # Update unit
         if 'unit' in data and data.get('unit'):
