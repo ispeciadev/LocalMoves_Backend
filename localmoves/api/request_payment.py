@@ -349,7 +349,7 @@ def send_payment_confirmation_email(payment_doc, request_doc):
                 <h3 style="color: #2c3e50;">Route Map</h3>
                 <a href="{osm_map_url}" target="_blank" style="display: inline-block; text-decoration: none;">
                     <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 20px; border-radius: 8px; color: white; font-size: 16px;">
-                        🗺️ View Route Mapsss
+                        🗺️ View Route Map
                     </div>
                 </a>
             </div>
