@@ -18,6 +18,41 @@ from localmoves.utils.config_manager import (
 from datetime import datetime
 import json
 
+
+
+def get_email_template(template_name, variables=None, default_subject="", default_body=""):
+    """
+    Get email template from database, or use default if not found.
+    Replaces variables in template if provided.
+    """
+    try:
+        # Query custom template from database
+        result = frappe.db.sql("""
+            SELECT email_subject, email_body
+            FROM `tabEmail Template Config`
+            WHERE template_name = %s
+            LIMIT 1
+        """, template_name, as_dict=True)
+       
+        if result:
+            subject = result[0]['email_subject']
+            body = result[0]['email_body']
+        else:
+            subject = default_subject
+            body = default_body
+       
+        # Replace variables if provided
+        if variables and isinstance(variables, dict):
+            for var_name, var_value in variables.items():
+                placeholder = "{" + var_name + "}"
+                subject = subject.replace(placeholder, str(var_value))
+                body = body.replace(placeholder, str(var_value))
+       
+        return subject, body
+    except Exception as e:
+        frappe.log_error(f"Email Template Error: {str(e)}")
+        return default_subject, default_body
+
 @frappe.whitelist(allow_guest=False)
 def fix_assessment_config():
     from localmoves.utils.config_manager import update_config, get_config
@@ -1121,11 +1156,99 @@ def calculate_mileage_cost(distance_miles, total_volume, cost_per_mile_under_25,
     
     return round(mileage_cost, 2)
 
+# def send_property_search_email(user_email, search_data, companies_data):
+#     """
+#     Send minimal email to user with property-based company search results
+#     Shows only top 3 companies with name and price range
+    
+#     Args:
+#         user_email: User's email address
+#         search_data: Dictionary with search parameters (property type, size, distance)
+#         companies_data: List of companies with cost estimations
+#     """
+#     try:
+#         from frappe.utils import get_url
+        
+#         total_companies = len(companies_data)
+        
+#         if total_companies == 0:
+#             subject = "No Moving Companies Found"
+#             message = f"""
+#             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+#                 <h2 style="color: #333;">No Companies Found</h2>
+#                 <p>We couldn't find any moving companies for pincode <strong>{search_data.get('pincode')}</strong>.</p>
+#                 <p>Please try searching with a different pincode.</p>
+#             </div>
+#             """
+#         else:
+#             # Sort companies by base_total cost and get top 3
+#             sorted_companies = sorted(companies_data, key=lambda x: x['cost_estimation']['base_total'])[:3]
+            
+#             # Build company list HTML - MINIMAL VERSION
+#             company_list_html = ""
+#             for idx, company in enumerate(sorted_companies, 1):
+#                 cost_est = company['cost_estimation']
+                
+#                 company_list_html += f"""
+#                 <div style="border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 15px; background-color: #fff;">
+#                     <h3 style="margin: 0 0 15px 0; color: #2c3e50; font-size: 18px;">{company['company_name']}</h3>
+                    
+#                     <div style="text-align: center; padding: 20px; background-color: #f0f9ff; border-radius: 5px;">
+#                         <div style="font-size: 28px; color: #2563eb; font-weight: bold;">
+#                             £{cost_est['estimated_range']['min']:,.2f} - £{cost_est['estimated_range']['max']:,.2f}
+#                         </div>
+#                         <div style="font-size: 13px; color: #666; margin-top: 5px;">Estimated Price Range</div>
+#                     </div>
+#                 </div>
+#                 """
+            
+#             subject = "LocalMoves - Estimated Price"
+#             message = f"""
+#             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                
+#                 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 25px; border-radius: 10px; color: white; text-align: center; margin-bottom: 30px;">
+#                     <h2 style="margin: 0; font-size: 24px;">Welcome to LocalMoves!</h2>
+#                     <p style="margin: 0; font-size: 18px;">We found {total_companies} Companies for Your Move!</p>
+#                 </div>
+                
+#                 {company_list_html}
+                
+#                 <div style="margin-top: 30px; padding: 25px; background-color: #f0f9ff; border-radius: 8px; text-align: center;">
+#                     <p style="margin: 0 0 15px 0; color: #1e40af; font-size: 16px; font-weight: 600;">
+#                         Ready to book your move?
+#                     </p>
+#                     <a href="{get_url()}" style="display: inline-block; padding: 14px 35px; background-color: #667eea; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 15px;">
+#                         View All Companies & Get Exact Quotes
+#                     </a>
+#                 </div>
+                
+#                 <div style="margin-top: 25px; text-align: center; color: #999; font-size: 12px;">
+#                     <p style="margin: 0;">© LocalMoves - Your Trusted Moving Partner</p>
+#                 </div>
+#             </div>
+#             """
+        
+#         # Send email
+#         frappe.sendmail(
+#             recipients=[user_email],
+#             subject=subject,
+#             message=message,
+#             delayed=False,
+#             now=True
+#         )
+        
+#         return True
+        
+#     except Exception as e:
+#         frappe.log_error(f"Property Search Email Error: {str(e)}", "Property Search Email")
+#         return False
+
+
 def send_property_search_email(user_email, search_data, companies_data):
     """
     Send minimal email to user with property-based company search results
     Shows only top 3 companies with name and price range
-    
+   
     Args:
         user_email: User's email address
         search_data: Dictionary with search parameters (property type, size, distance)
@@ -1133,12 +1256,14 @@ def send_property_search_email(user_email, search_data, companies_data):
     """
     try:
         from frappe.utils import get_url
-        
+       
         total_companies = len(companies_data)
-        
+        default_subject = "LocalMoves - Estimated Price"
+        default_message = ""
+       
         if total_companies == 0:
-            subject = "No Moving Companies Found"
-            message = f"""
+            default_subject = "No Moving Companies Found"
+            default_message = f"""
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
                 <h2 style="color: #333;">No Companies Found</h2>
                 <p>We couldn't find any moving companies for pincode <strong>{search_data.get('pincode')}</strong>.</p>
@@ -1148,36 +1273,35 @@ def send_property_search_email(user_email, search_data, companies_data):
         else:
             # Sort companies by base_total cost and get top 3
             sorted_companies = sorted(companies_data, key=lambda x: x['cost_estimation']['base_total'])[:3]
-            
+           
             # Build company list HTML - MINIMAL VERSION
             company_list_html = ""
             for idx, company in enumerate(sorted_companies, 1):
                 cost_est = company['cost_estimation']
-                
+               
                 company_list_html += f"""
                 <div style="border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 15px; background-color: #fff;">
                     <h3 style="margin: 0 0 15px 0; color: #2c3e50; font-size: 18px;">{company['company_name']}</h3>
-                    
+                   
                     <div style="text-align: center; padding: 20px; background-color: #f0f9ff; border-radius: 5px;">
                         <div style="font-size: 28px; color: #2563eb; font-weight: bold;">
-                            £{cost_est['estimated_range']['min']:,.2f} - £{cost_est['estimated_range']['max']:,.2f}
+                            £{cost_est.get('base_total', 0):,.2f}
                         </div>
-                        <div style="font-size: 13px; color: #666; margin-top: 5px;">Estimated Price Range</div>
+                        <div style="font-size: 13px; color: #666; margin-top: 5px;">Estimated Price</div>
                     </div>
                 </div>
                 """
-            
-            subject = "LocalMoves - Estimated Price"
-            message = f"""
+           
+            default_message = f"""
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-                
+               
                 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 25px; border-radius: 10px; color: white; text-align: center; margin-bottom: 30px;">
                     <h2 style="margin: 0; font-size: 24px;">Welcome to LocalMoves!</h2>
                     <p style="margin: 0; font-size: 18px;">We found {total_companies} Companies for Your Move!</p>
                 </div>
-                
+               
                 {company_list_html}
-                
+               
                 <div style="margin-top: 30px; padding: 25px; background-color: #f0f9ff; border-radius: 8px; text-align: center;">
                     <p style="margin: 0 0 15px 0; color: #1e40af; font-size: 16px; font-weight: 600;">
                         Ready to book your move?
@@ -1186,27 +1310,47 @@ def send_property_search_email(user_email, search_data, companies_data):
                         View All Companies & Get Exact Quotes
                     </a>
                 </div>
-                
+               
                 <div style="margin-top: 25px; text-align: center; color: #999; font-size: 12px;">
                     <p style="margin: 0;">© LocalMoves - Your Trusted Moving Partner</p>
                 </div>
             </div>
             """
-        
-        # Send email
-        frappe.sendmail(
-            recipients=[user_email],
-            subject=subject,
-            message=message,
-            delayed=False,
-            now=True
-        )
-        
-        return True
-        
+       
+        # Get custom template or use default
+        template_vars = {
+            "user_name": user_email.split('@')[0] if user_email else "User",
+            "company_count": total_companies,
+            "company_list": company_list_html if total_companies > 0 else "",
+            "view_all_link": get_url() if total_companies > 0 else ""
+        }
+        subject, message = get_email_template("property_search_results", template_vars, default_subject, default_message)
+       
+        # Send email with better error handling
+        try:
+            frappe.sendmail(
+                recipients=[user_email],
+                subject=subject,
+                message=message,
+                delayed=False,
+                now=True
+            )
+            return True
+        except Exception as email_error:
+            error_msg = str(email_error)
+            # Check if it's a configuration error
+            if "Email Account" in error_msg or "OutgoingEmailError" in str(type(email_error)):
+                frappe.log_error(f"Email configuration missing: {error_msg}", "Email Configuration Error")
+                # Still return False but don't crash - let the calling function handle it
+                return False
+            else:
+                # Re-raise other exceptions
+                raise
+       
     except Exception as e:
         frappe.log_error(f"Property Search Email Error: {str(e)}", "Property Search Email")
         return False
+
 
 
 

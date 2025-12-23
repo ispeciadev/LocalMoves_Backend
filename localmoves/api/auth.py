@@ -7,6 +7,42 @@ from twilio.rest import Client
 import re
 import json
 
+
+
+
+def get_email_template(template_name, variables=None, default_subject="", default_body=""):
+    """
+    Get email template from database, or use default if not found.
+    Replaces variables in template if provided.
+    """
+    try:
+        # Query custom template from database
+        result = frappe.db.sql("""
+            SELECT email_subject, email_body
+            FROM `tabEmail Template Config`
+            WHERE template_name = %s
+            LIMIT 1
+        """, template_name, as_dict=True)
+       
+        if result:
+            subject = result[0]['email_subject']
+            body = result[0]['email_body']
+        else:
+            subject = default_subject
+            body = default_body
+       
+        # Replace variables if provided
+        if variables and isinstance(variables, dict):
+            for var_name, var_value in variables.items():
+                placeholder = "{" + var_name + "}"
+                subject = subject.replace(placeholder, str(var_value))
+                body = body.replace(placeholder, str(var_value))
+       
+        return subject, body
+    except Exception as e:
+        frappe.log_error(f"Email Template Error: {str(e)}")
+        return default_subject, default_body
+
 # Twilio Configuration - Read from site_config for security
 def get_twilio_credentials():
     """Get Twilio credentials from site config"""
@@ -73,6 +109,114 @@ def send_otp(phone=None):
         return {"success": False, "message": f"Failed to send OTP: {str(e)}"}
 
 
+# def send_logistics_manager_welcome_email(user_email, full_name, phone, password):
+#     """Send welcome email to newly registered Logistics Manager with credentials"""
+#     try:
+#         # Professional welcome email template
+#         email_content = f"""
+#         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+#             <div style="text-align: center; margin-bottom: 30px;">
+#                 <h1 style="color: #2c3e50; margin: 0;">🚚 Welcome to LocalMoves</h1>
+#                 <p style="color: #7f8c8d; font-size: 16px;">Logistics Manager Account</p>
+#             </div>
+            
+#             <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 8px; color: white; text-align: center; margin-bottom: 30px;">
+#                 <h2 style="margin: 0 0 10px 0;">🎉 Account Created Successfully!</h2>
+#                 <p style="margin: 0; font-size: 14px; opacity: 0.9;">Your Logistics Manager account is now active</p>
+#             </div>
+            
+#             <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+#                 <h3 style="color: #2c3e50; margin-top: 0;">Your Account Details</h3>
+#                 <table style="width: 100%; border-collapse: collapse;">
+#                     <tr>
+#                         <td style="padding: 10px 0; font-weight: bold; width: 40%;">Full Name:</td>
+#                         <td style="padding: 10px 0;">{full_name}</td>
+#                     </tr>
+#                     <tr style="background-color: white;">
+#                         <td style="padding: 10px 0; font-weight: bold;">Email:</td>
+#                         <td style="padding: 10px 0;">{user_email}</td>
+#                     </tr>
+#                     <tr>
+#                         <td style="padding: 10px 0; font-weight: bold;">Phone:</td>
+#                         <td style="padding: 10px 0;">{phone}</td>
+#                     </tr>
+#                     <tr style="background-color: white;">
+#                         <td style="padding: 10px 0; font-weight: bold;">Role:</td>
+#                         <td style="padding: 10px 0;"><span style="background-color: #28a745; color: white; padding: 3px 10px; border-radius: 3px; font-size: 12px;">Logistics Manager</span></td>
+#                     </tr>
+#                     <tr>
+#                         <td style="padding: 10px 0; font-weight: bold;">Account Status:</td>
+#                         <td style="padding: 10px 0;"><span style="color: #28a745;">✅ Active & Verified</span></td>
+#                     </tr>
+#                 </table>
+#             </div>
+            
+#             <div style="background-color: #fff3cd; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
+#                 <h3 style="color: #856404; margin-top: 0;">🔐 Your Login Credentials</h3>
+#                 <table style="width: 100%; border-collapse: collapse; background-color: white; padding: 15px; border-radius: 5px;">
+#                     <tr>
+#                         <td style="padding: 12px; font-weight: bold; width: 35%; border-bottom: 1px solid #e0e0e0;">Email/Username:</td>
+#                         <td style="padding: 12px; border-bottom: 1px solid #e0e0e0; font-family: 'Courier New', monospace; color: #2c3e50;">{user_email}</td>
+#                     </tr>
+#                     <tr>
+#                         <td style="padding: 12px; font-weight: bold;">Password:</td>
+#                         <td style="padding: 12px; font-family: 'Courier New', monospace; color: #d32f2f; font-weight: bold;">{password}</td>
+#                     </tr>
+#                 </table>
+#                 <div style="margin-top: 15px; padding: 12px; background-color: #fff; border-radius: 5px; border: 1px solid #ffc107;">
+#                     <p style="margin: 0; color: #856404; font-size: 13px;">
+#                         <strong>⚠️ Security Notice:</strong> For your security, please change your password immediately after your first login. Delete this email after saving your credentials securely.
+#                     </p>
+#                 </div>
+#             </div>
+            
+            
+#             <div style="text-align: center; margin: 30px 0; padding: 20px; background-color: #f8f9fa; border-radius: 5px;">
+#                 <p style="margin: 0 0 15px 0; color: #666;">Ready to get started?</p>
+#                 <a href="https://your-app-url.com/login" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+#                     Login to Dashboard
+#                 </a>
+#             </div>
+            
+            
+#             <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center;">
+#                 <p style="color: #666; font-size: 14px; margin: 5px 0;">Need help? Contact our support team</p>
+#                 <p style="color: #666; font-size: 14px; margin: 5px 0;">
+#                     📧 <a href="mailto:support@localmoves.com" style="color: #667eea;">support@localmoves.com</a> | 
+#                     📱 <a href="tel:+911234567890" style="color: #667eea;">+91 123 456 7890</a>
+#                 </p>
+#             </div>
+            
+#             <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+#                 <p style="color: #999; font-size: 12px; margin: 5px 0;">
+#                     This email was sent to {user_email} because you registered as a Logistics Manager on LocalMoves.
+#                 </p>
+#                 <p style="color: #999; font-size: 12px; margin: 5px 0;">
+#                     © 2025 LocalMoves - All Rights Reserved
+#                 </p>
+#             </div>
+#         </div>
+#         """
+        
+#         # Send email using Frappe's email system
+#         frappe.sendmail(
+#             recipients=[user_email],
+#             sender="megha250903@gmail.com",  # Your configured sender email
+#             subject="🎉 Welcome to LocalMoves - Logistics Manager Account Created",
+#             message=email_content,
+#             delayed=False,
+#             now=True
+#         )
+        
+#         frappe.logger().info(f"Welcome email sent successfully to Logistics Manager: {user_email}")
+#         return True
+        
+#     except Exception as e:
+#         frappe.log_error(f"Failed to send welcome email to {user_email}: {str(e)}", "Logistics Manager Welcome Email Error")
+#         # Don't fail the signup if email fails
+#         return False
+
+
 def send_logistics_manager_welcome_email(user_email, full_name, phone, password):
     """Send welcome email to newly registered Logistics Manager with credentials"""
     try:
@@ -83,12 +227,12 @@ def send_logistics_manager_welcome_email(user_email, full_name, phone, password)
                 <h1 style="color: #2c3e50; margin: 0;">🚚 Welcome to LocalMoves</h1>
                 <p style="color: #7f8c8d; font-size: 16px;">Logistics Manager Account</p>
             </div>
-            
+           
             <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 8px; color: white; text-align: center; margin-bottom: 30px;">
                 <h2 style="margin: 0 0 10px 0;">🎉 Account Created Successfully!</h2>
                 <p style="margin: 0; font-size: 14px; opacity: 0.9;">Your Logistics Manager account is now active</p>
             </div>
-            
+           
             <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
                 <h3 style="color: #2c3e50; margin-top: 0;">Your Account Details</h3>
                 <table style="width: 100%; border-collapse: collapse;">
@@ -114,7 +258,7 @@ def send_logistics_manager_welcome_email(user_email, full_name, phone, password)
                     </tr>
                 </table>
             </div>
-            
+           
             <div style="background-color: #fff3cd; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
                 <h3 style="color: #856404; margin-top: 0;">🔐 Your Login Credentials</h3>
                 <table style="width: 100%; border-collapse: collapse; background-color: white; padding: 15px; border-radius: 5px;">
@@ -133,24 +277,24 @@ def send_logistics_manager_welcome_email(user_email, full_name, phone, password)
                     </p>
                 </div>
             </div>
-            
-            
+           
+           
             <div style="text-align: center; margin: 30px 0; padding: 20px; background-color: #f8f9fa; border-radius: 5px;">
                 <p style="margin: 0 0 15px 0; color: #666;">Ready to get started?</p>
                 <a href="https://your-app-url.com/login" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
                     Login to Dashboard
                 </a>
             </div>
-            
-            
+           
+           
             <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center;">
                 <p style="color: #666; font-size: 14px; margin: 5px 0;">Need help? Contact our support team</p>
                 <p style="color: #666; font-size: 14px; margin: 5px 0;">
-                    📧 <a href="mailto:support@localmoves.com" style="color: #667eea;">support@localmoves.com</a> | 
+                    📧 <a href="mailto:support@localmoves.com" style="color: #667eea;">support@localmoves.com</a> |
                     📱 <a href="tel:+911234567890" style="color: #667eea;">+91 123 456 7890</a>
                 </p>
             </div>
-            
+           
             <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
                 <p style="color: #999; font-size: 12px; margin: 5px 0;">
                     This email was sent to {user_email} because you registered as a Logistics Manager on LocalMoves.
@@ -161,24 +305,35 @@ def send_logistics_manager_welcome_email(user_email, full_name, phone, password)
             </div>
         </div>
         """
-        
+       
+        # Get custom template or use default
+        default_subject = "🎉 Welcome to LocalMoves - Logistics Manager Account Created"
+        template_vars = {
+            "user_name": full_name,
+            "user_email": user_email,
+            "phone": phone,
+            "password": password
+        }
+        subject, message = get_email_template("signup_verification", template_vars, default_subject, email_content)
+       
         # Send email using Frappe's email system
         frappe.sendmail(
             recipients=[user_email],
-            sender="megha250903@gmail.com",  # Your configured sender email
-            subject="🎉 Welcome to LocalMoves - Logistics Manager Account Created",
-            message=email_content,
+            sender="megha250903@gmail.com",
+            subject=subject,
+            message=message,
             delayed=False,
             now=True
         )
-        
+       
         frappe.logger().info(f"Welcome email sent successfully to Logistics Manager: {user_email}")
         return True
-        
+       
     except Exception as e:
         frappe.log_error(f"Failed to send welcome email to {user_email}: {str(e)}", "Logistics Manager Welcome Email Error")
         # Don't fail the signup if email fails
         return False
+
 
 @frappe.whitelist(allow_guest=True)
 def signup(full_name=None, email=None, password=None, phone=None, otp=None, role=None,
@@ -404,6 +559,135 @@ def get_current_user_info():
         return {"success": False, "message": "Failed to get user info or invalid token"}
 
 
+# @frappe.whitelist(allow_guest=True)
+# def forgot_password(email=None):
+#     """Forgot Password API with Email Sending"""
+#     try:
+#         # Get email from JSON body if not provided
+#         if not email:
+#             email = frappe.local.form_dict.get("email")
+        
+#         if not email:
+#             return {"success": False, "message": "email is required"}
+        
+#         # Check if user exists
+#         if not frappe.db.exists("LocalMoves User", email):
+#             # Don't reveal if email doesn't exist (security best practice)
+#             return {"success": True, "message": "If the email exists, a reset link has been sent."}
+
+#         user_doc = frappe.get_doc("LocalMoves User", email)
+        
+#         # Generate reset token (JWT - valid for duration set in jwt_handler)
+#         reset_token = generate_token(user_doc.name, email, user_doc.role)
+        
+#         # 🔥 BUILD RESET LINK - Update with your actual frontend URL
+#         reset_link = f"http://localhost:5173/reset-password?token={reset_token}"
+        
+#         # 🔥 SEND PASSWORD RESET EMAIL
+#         try:
+#             email_content = f"""
+#             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+#                 <div style="text-align: center; margin-bottom: 30px;">
+#                     <h1 style="color: #2c3e50; margin: 0;">🔐 Password Reset Request</h1>
+#                     <p style="color: #7f8c8d; font-size: 16px;">LocalMoves Account Security</p>
+#                 </div>
+                
+#                 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 8px; color: white; text-align: center; margin-bottom: 30px;">
+#                     <h2 style="margin: 0 0 10px 0;">Reset Your Password</h2>
+#                     <p style="margin: 0; font-size: 14px; opacity: 0.9;">We received a request to reset your password</p>
+#                 </div>
+                
+#                 <div style="padding: 20px 0;">
+#                     <p style="color: #2c3e50; font-size: 16px;">Hello <strong>{user_doc.full_name}</strong>,</p>
+#                     <p style="color: #555; line-height: 1.6;">
+#                         We received a request to reset the password for your LocalMoves account (<strong>{email}</strong>).
+#                     </p>
+#                     <p style="color: #555; line-height: 1.6;">
+#                         Click the button below to create a new password:
+#                     </p>
+#                 </div>
+                
+#                 <div style="text-align: center; margin: 30px 0;">
+#                     <a href="{reset_link}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 5px; font-weight: bold; font-size: 16px;">
+#                         Reset My Password
+#                     </a>
+#                 </div>
+                
+#                 <div style="background-color: #fff3cd; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
+#                     <p style="margin: 0 0 10px 0; color: #856404; font-weight: bold;">
+#                         ⚠️ Security Notice:
+#                     </p>
+#                     <ul style="margin: 0; padding-left: 20px; color: #856404;">
+#                         <li>This link will expire in <strong>1 hour</strong></li>
+#                         <li>If you didn't request this reset, please ignore this email</li>
+#                         <li>Your password will remain unchanged if you don't click the link</li>
+#                     </ul>
+#                 </div>
+                
+#                 <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+#                     <p style="margin: 0 0 10px 0; color: #666; font-size: 13px; font-weight: bold;">
+#                         Button not working? Copy and paste this link into your browser:
+#                     </p>
+#                     <p style="margin: 0; word-break: break-all;">
+#                         <code style="background: #e9ecef; padding: 8px; display: block; border-radius: 3px; color: #495057; font-size: 12px;">{reset_link}</code>
+#                     </p>
+#                 </div>
+                
+#                 <div style="background-color: #e3f2fd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #2196f3;">
+#                     <p style="margin: 0; color: #1565c0; font-size: 14px;">
+#                         <strong>💡 Tip:</strong> After resetting your password, make sure to use a strong password that includes uppercase letters, lowercase letters, numbers, and special characters.
+#                     </p>
+#                 </div>
+                
+#                 <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center;">
+#                     <p style="color: #666; font-size: 14px; margin: 5px 0;">Need help? Contact our support team</p>
+#                     <p style="color: #666; font-size: 14px; margin: 5px 0;">
+#                         📧 <a href="mailto:support@localmoves.com" style="color: #667eea;">support@localmoves.com</a> | 
+#                         📱 <a href="tel:+911234567890" style="color: #667eea;">+91 123 456 7890</a>
+#                     </p>
+#                 </div>
+                
+#                 <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+#                     <p style="color: #999; font-size: 12px; margin: 5px 0;">
+#                         This email was sent to {email} because a password reset was requested for this account.
+#                     </p>
+#                     <p style="color: #999; font-size: 12px; margin: 5px 0;">
+#                         © 2025 LocalMoves - All Rights Reserved
+#                     </p>
+#                 </div>
+#             </div>
+#             """
+            
+#             frappe.sendmail(
+#                 recipients=[email],
+#                 sender="megha250903@gmail.com",
+#                 subject="🔐 Password Reset Request - LocalMoves",
+#                 message=email_content,
+#                 delayed=False,
+#                 now=True
+#             )
+            
+#             frappe.logger().info(f"Password reset email sent successfully to: {email}")
+            
+#         except Exception as email_error:
+#             frappe.log_error(f"Failed to send password reset email to {email}: {str(email_error)}", "Password Reset Email Error")
+#             return {"success": False, "message": "Failed to send password reset email. Please try again later."}
+
+#         return {
+#             "success": True,
+#             "message": "Password reset link has been sent to your email address. Please check your inbox.",
+#             "data": {
+#                 "email": email,
+#                 "reset_token": reset_token  # Optional: Include for testing/development only
+#             }
+#         }
+
+#     except Exception as e:
+#         frappe.log_error(f"Forgot Password Error: {str(e)}", "Forgot Password Failed")
+#         return {"success": False, "message": "Failed to process password reset request"}
+
+
+
 @frappe.whitelist(allow_guest=True)
 def forgot_password(email=None):
     """Forgot Password API with Email Sending"""
@@ -411,23 +695,24 @@ def forgot_password(email=None):
         # Get email from JSON body if not provided
         if not email:
             email = frappe.local.form_dict.get("email")
-        
+       
         if not email:
             return {"success": False, "message": "email is required"}
-        
+       
         # Check if user exists
         if not frappe.db.exists("LocalMoves User", email):
             # Don't reveal if email doesn't exist (security best practice)
             return {"success": True, "message": "If the email exists, a reset link has been sent."}
 
+
         user_doc = frappe.get_doc("LocalMoves User", email)
-        
+       
         # Generate reset token (JWT - valid for duration set in jwt_handler)
         reset_token = generate_token(user_doc.name, email, user_doc.role)
-        
+       
         # 🔥 BUILD RESET LINK - Update with your actual frontend URL
         reset_link = f"http://localhost:5173/reset-password?token={reset_token}"
-        
+       
         # 🔥 SEND PASSWORD RESET EMAIL
         try:
             email_content = f"""
@@ -436,12 +721,12 @@ def forgot_password(email=None):
                     <h1 style="color: #2c3e50; margin: 0;">🔐 Password Reset Request</h1>
                     <p style="color: #7f8c8d; font-size: 16px;">LocalMoves Account Security</p>
                 </div>
-                
+               
                 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 8px; color: white; text-align: center; margin-bottom: 30px;">
                     <h2 style="margin: 0 0 10px 0;">Reset Your Password</h2>
                     <p style="margin: 0; font-size: 14px; opacity: 0.9;">We received a request to reset your password</p>
                 </div>
-                
+               
                 <div style="padding: 20px 0;">
                     <p style="color: #2c3e50; font-size: 16px;">Hello <strong>{user_doc.full_name}</strong>,</p>
                     <p style="color: #555; line-height: 1.6;">
@@ -451,13 +736,13 @@ def forgot_password(email=None):
                         Click the button below to create a new password:
                     </p>
                 </div>
-                
+               
                 <div style="text-align: center; margin: 30px 0;">
                     <a href="{reset_link}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 5px; font-weight: bold; font-size: 16px;">
                         Reset My Password
                     </a>
                 </div>
-                
+               
                 <div style="background-color: #fff3cd; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
                     <p style="margin: 0 0 10px 0; color: #856404; font-weight: bold;">
                         ⚠️ Security Notice:
@@ -468,7 +753,7 @@ def forgot_password(email=None):
                         <li>Your password will remain unchanged if you don't click the link</li>
                     </ul>
                 </div>
-                
+               
                 <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
                     <p style="margin: 0 0 10px 0; color: #666; font-size: 13px; font-weight: bold;">
                         Button not working? Copy and paste this link into your browser:
@@ -477,21 +762,21 @@ def forgot_password(email=None):
                         <code style="background: #e9ecef; padding: 8px; display: block; border-radius: 3px; color: #495057; font-size: 12px;">{reset_link}</code>
                     </p>
                 </div>
-                
+               
                 <div style="background-color: #e3f2fd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #2196f3;">
                     <p style="margin: 0; color: #1565c0; font-size: 14px;">
                         <strong>💡 Tip:</strong> After resetting your password, make sure to use a strong password that includes uppercase letters, lowercase letters, numbers, and special characters.
                     </p>
                 </div>
-                
+               
                 <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center;">
                     <p style="color: #666; font-size: 14px; margin: 5px 0;">Need help? Contact our support team</p>
                     <p style="color: #666; font-size: 14px; margin: 5px 0;">
-                        📧 <a href="mailto:support@localmoves.com" style="color: #667eea;">support@localmoves.com</a> | 
+                        📧 <a href="mailto:support@localmoves.com" style="color: #667eea;">support@localmoves.com</a> |
                         📱 <a href="tel:+911234567890" style="color: #667eea;">+91 123 456 7890</a>
                     </p>
                 </div>
-                
+               
                 <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
                     <p style="color: #999; font-size: 12px; margin: 5px 0;">
                         This email was sent to {email} because a password reset was requested for this account.
@@ -502,21 +787,40 @@ def forgot_password(email=None):
                 </div>
             </div>
             """
-            
-            frappe.sendmail(
-                recipients=[email],
-                sender="megha250903@gmail.com",
-                subject="🔐 Password Reset Request - LocalMoves",
-                message=email_content,
-                delayed=False,
-                now=True
-            )
-            
+           
+            # Get custom template or use default
+            default_subject = "🔐 Password Reset Request - LocalMoves"
+            template_vars = {
+                "user_name": user_name,
+                "user_email": email,
+                "reset_link": reset_link,
+                "expiry_time": "30 minutes"
+            }
+            subject, message = get_email_template("password_reset", template_vars, default_subject, email_content)
+           
+            try:
+                frappe.sendmail(
+                    recipients=[email],
+                    sender="megha250903@gmail.com",
+                    subject=subject,
+                    message=message,
+                    delayed=False,
+                    now=True
+                )
+            except Exception as email_error:
+                error_msg = str(email_error)
+                if "Email Account" in error_msg or "OutgoingEmailError" in str(type(email_error)):
+                    frappe.log_error(f"Email configuration missing: {error_msg}", "Email Configuration Error")
+                    return {"success": False, "message": "Email service not configured. Please contact support."}
+                else:
+                    raise
+           
             frappe.logger().info(f"Password reset email sent successfully to: {email}")
-            
+           
         except Exception as email_error:
             frappe.log_error(f"Failed to send password reset email to {email}: {str(email_error)}", "Password Reset Email Error")
             return {"success": False, "message": "Failed to send password reset email. Please try again later."}
+
 
         return {
             "success": True,
@@ -527,9 +831,13 @@ def forgot_password(email=None):
             }
         }
 
+
     except Exception as e:
         frappe.log_error(f"Forgot Password Error: {str(e)}", "Forgot Password Failed")
         return {"success": False, "message": "Failed to process password reset request"}
+
+
+
 
 
 @frappe.whitelist(allow_guest=True)
