@@ -7,14 +7,27 @@ from twilio.rest import Client
 import re
 import json
 import os
-from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+
+def load_env_file():
+    """Load environment variables from .env file"""
+    env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        if '=' in line:
+                            key, value = line.split('=', 1)
+                            os.environ[key.strip()] = value.strip()
+        except Exception as e:
+            frappe.log_error(f"Failed to load .env file: {str(e)}", "ENV File Load Error")
 
 
 def get_frontend_url():
     """Get frontend URL from environment variable or default"""
+    load_env_file()
     return os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 
