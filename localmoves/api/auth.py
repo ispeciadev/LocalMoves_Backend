@@ -6,8 +6,16 @@ from datetime import datetime, timedelta
 from twilio.rest import Client
 import re
 import json
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 
+def get_frontend_url():
+    """Get frontend URL from environment variable or default"""
+    return os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 
 def get_email_template(template_name, variables=None, default_subject="", default_body=""):
@@ -706,8 +714,9 @@ def forgot_password(email=None):
         # Generate reset token (JWT - valid for duration set in jwt_handler)
         reset_token = generate_token(user_doc.name, email, user_doc.role)
        
-        # 🔥 BUILD RESET LINK - Update with your actual frontend URL
-        reset_link = f"http://localhost:5173/reset-password?token={reset_token}"
+        # 🔥 BUILD RESET LINK - Using frontend URL from .env
+        frontend_url = get_frontend_url()
+        reset_link = f"{frontend_url}/reset-password?token={reset_token}"
        
         # 🔥 SEND PASSWORD RESET EMAIL
         try:
@@ -823,7 +832,7 @@ def forgot_password(email=None):
         frappe.log_error(f"Forgot Password Error: {str(e)}", "Forgot Password Failed")
         return {"success": False, "message": "Failed to process password reset request"}
     
-    
+
 # @frappe.whitelist(allow_guest=True)
 # def forgot_password(email=None):
 #     """Forgot Password API with Email Sending"""
