@@ -6790,7 +6790,7 @@ def manage_password_reset_template():
                 </div>
             </div>
             """,
-            "variables": ["user_name", "user_email", "reset_link", "expiry_time"]
+            "variables": ["user_email", "reset_link", "expiry_time"]  # ✅ REMOVED "user_name"
         }
        
         if action == "get":
@@ -6901,10 +6901,7 @@ def manage_password_reset_template():
     except Exception as e:
         frappe.log_error(f"Password Reset Template Error: {str(e)}")
         return {"success": False, "message": str(e)}
-
-
-
-
+    
 @frappe.whitelist()
 def manage_property_search_template():
     """

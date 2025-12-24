@@ -685,9 +685,6 @@ def get_current_user_info():
 #     except Exception as e:
 #         frappe.log_error(f"Forgot Password Error: {str(e)}", "Forgot Password Failed")
 #         return {"success": False, "message": "Failed to process password reset request"}
-
-
-
 @frappe.whitelist(allow_guest=True)
 def forgot_password(email=None):
     """Forgot Password API with Email Sending"""
@@ -704,7 +701,6 @@ def forgot_password(email=None):
             # Don't reveal if email doesn't exist (security best practice)
             return {"success": True, "message": "If the email exists, a reset link has been sent."}
 
-
         user_doc = frappe.get_doc("LocalMoves User", email)
        
         # Generate reset token (JWT - valid for duration set in jwt_handler)
@@ -715,7 +711,8 @@ def forgot_password(email=None):
        
         # 🔥 SEND PASSWORD RESET EMAIL
         try:
-            email_content = f"""
+            # Default email content - NO user_name variable
+            default_email_content = """
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
                 <div style="text-align: center; margin-bottom: 30px;">
                     <h1 style="color: #2c3e50; margin: 0;">🔐 Password Reset Request</h1>
@@ -728,9 +725,9 @@ def forgot_password(email=None):
                 </div>
                
                 <div style="padding: 20px 0;">
-                    <p style="color: #2c3e50; font-size: 16px;">Hello <strong>{user_doc.full_name}</strong>,</p>
+                    <p style="color: #2c3e50; font-size: 16px;">Hello,</p>
                     <p style="color: #555; line-height: 1.6;">
-                        We received a request to reset the password for your LocalMoves account (<strong>{email}</strong>).
+                        We received a request to reset the password for your LocalMoves account (<strong>{user_email}</strong>).
                     </p>
                     <p style="color: #555; line-height: 1.6;">
                         Click the button below to create a new password:
@@ -748,7 +745,7 @@ def forgot_password(email=None):
                         ⚠️ Security Notice:
                     </p>
                     <ul style="margin: 0; padding-left: 20px; color: #856404;">
-                        <li>This link will expire in <strong>1 hour</strong></li>
+                        <li>This link will expire in <strong>{expiry_time}</strong></li>
                         <li>If you didn't request this reset, please ignore this email</li>
                         <li>Your password will remain unchanged if you don't click the link</li>
                     </ul>
@@ -779,7 +776,7 @@ def forgot_password(email=None):
                
                 <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
                     <p style="color: #999; font-size: 12px; margin: 5px 0;">
-                        This email was sent to {email} because a password reset was requested for this account.
+                        This email was sent to {user_email} because a password reset was requested for this account.
                     </p>
                     <p style="color: #999; font-size: 12px; margin: 5px 0;">
                         © 2025 LocalMoves - All Rights Reserved
@@ -788,32 +785,24 @@ def forgot_password(email=None):
             </div>
             """
            
-            # Get custom template or use default
+            # Get custom template or use default (with variable replacement)
+            # ✅ REMOVED user_name from template_vars
             default_subject = "🔐 Password Reset Request - LocalMoves"
             template_vars = {
-                "user_name": user_name,
                 "user_email": email,
                 "reset_link": reset_link,
-                "expiry_time": "30 minutes"
+                "expiry_time": "1 hour"
             }
-            subject, message = get_email_template("password_reset", template_vars, default_subject, email_content)
+            subject, message = get_email_template("password_reset", template_vars, default_subject, default_email_content)
            
-            try:
-                frappe.sendmail(
-                    recipients=[email],
-                    sender="megha250903@gmail.com",
-                    subject=subject,
-                    message=message,
-                    delayed=False,
-                    now=True
-                )
-            except Exception as email_error:
-                error_msg = str(email_error)
-                if "Email Account" in error_msg or "OutgoingEmailError" in str(type(email_error)):
-                    frappe.log_error(f"Email configuration missing: {error_msg}", "Email Configuration Error")
-                    return {"success": False, "message": "Email service not configured. Please contact support."}
-                else:
-                    raise
+            frappe.sendmail(
+                recipients=[email],
+                sender="megha250903@gmail.com",
+                subject=subject,
+                message=message,
+                delayed=False,
+                now=True
+            )
            
             frappe.logger().info(f"Password reset email sent successfully to: {email}")
            
@@ -821,20 +810,167 @@ def forgot_password(email=None):
             frappe.log_error(f"Failed to send password reset email to {email}: {str(email_error)}", "Password Reset Email Error")
             return {"success": False, "message": "Failed to send password reset email. Please try again later."}
 
-
         return {
             "success": True,
             "message": "Password reset link has been sent to your email address. Please check your inbox.",
             "data": {
                 "email": email,
-                "reset_token": reset_token  # Optional: Include for testing/development only
+                "reset_token": reset_token
             }
         }
-
 
     except Exception as e:
         frappe.log_error(f"Forgot Password Error: {str(e)}", "Forgot Password Failed")
         return {"success": False, "message": "Failed to process password reset request"}
+    
+    
+# @frappe.whitelist(allow_guest=True)
+# def forgot_password(email=None):
+#     """Forgot Password API with Email Sending"""
+#     try:
+#         # Get email from JSON body if not provided
+#         if not email:
+#             email = frappe.local.form_dict.get("email")
+       
+#         if not email:
+#             return {"success": False, "message": "email is required"}
+       
+#         # Check if user exists
+#         if not frappe.db.exists("LocalMoves User", email):
+#             # Don't reveal if email doesn't exist (security best practice)
+#             return {"success": True, "message": "If the email exists, a reset link has been sent."}
+
+
+#         user_doc = frappe.get_doc("LocalMoves User", email)
+       
+#         # Generate reset token (JWT - valid for duration set in jwt_handler)
+#         reset_token = generate_token(user_doc.name, email, user_doc.role)
+       
+#         # 🔥 BUILD RESET LINK - Update with your actual frontend URL
+#         reset_link = f"http://localhost:5173/reset-password?token={reset_token}"
+       
+#         # 🔥 SEND PASSWORD RESET EMAIL
+#         try:
+#             email_content = f"""
+#             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+#                 <div style="text-align: center; margin-bottom: 30px;">
+#                     <h1 style="color: #2c3e50; margin: 0;">🔐 Password Reset Request</h1>
+#                     <p style="color: #7f8c8d; font-size: 16px;">LocalMoves Account Security</p>
+#                 </div>
+               
+#                 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 8px; color: white; text-align: center; margin-bottom: 30px;">
+#                     <h2 style="margin: 0 0 10px 0;">Reset Your Password</h2>
+#                     <p style="margin: 0; font-size: 14px; opacity: 0.9;">We received a request to reset your password</p>
+#                 </div>
+               
+#                 <div style="padding: 20px 0;">
+#                     <p style="color: #2c3e50; font-size: 16px;">Hello <strong>{user_doc.full_name}</strong>,</p>
+#                     <p style="color: #555; line-height: 1.6;">
+#                         We received a request to reset the password for your LocalMoves account (<strong>{email}</strong>).
+#                     </p>
+#                     <p style="color: #555; line-height: 1.6;">
+#                         Click the button below to create a new password:
+#                     </p>
+#                 </div>
+               
+#                 <div style="text-align: center; margin: 30px 0;">
+#                     <a href="{reset_link}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 5px; font-weight: bold; font-size: 16px;">
+#                         Reset My Password
+#                     </a>
+#                 </div>
+               
+#                 <div style="background-color: #fff3cd; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
+#                     <p style="margin: 0 0 10px 0; color: #856404; font-weight: bold;">
+#                         ⚠️ Security Notice:
+#                     </p>
+#                     <ul style="margin: 0; padding-left: 20px; color: #856404;">
+#                         <li>This link will expire in <strong>1 hour</strong></li>
+#                         <li>If you didn't request this reset, please ignore this email</li>
+#                         <li>Your password will remain unchanged if you don't click the link</li>
+#                     </ul>
+#                 </div>
+               
+#                 <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+#                     <p style="margin: 0 0 10px 0; color: #666; font-size: 13px; font-weight: bold;">
+#                         Button not working? Copy and paste this link into your browser:
+#                     </p>
+#                     <p style="margin: 0; word-break: break-all;">
+#                         <code style="background: #e9ecef; padding: 8px; display: block; border-radius: 3px; color: #495057; font-size: 12px;">{reset_link}</code>
+#                     </p>
+#                 </div>
+               
+#                 <div style="background-color: #e3f2fd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #2196f3;">
+#                     <p style="margin: 0; color: #1565c0; font-size: 14px;">
+#                         <strong>💡 Tip:</strong> After resetting your password, make sure to use a strong password that includes uppercase letters, lowercase letters, numbers, and special characters.
+#                     </p>
+#                 </div>
+               
+#                 <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center;">
+#                     <p style="color: #666; font-size: 14px; margin: 5px 0;">Need help? Contact our support team</p>
+#                     <p style="color: #666; font-size: 14px; margin: 5px 0;">
+#                         📧 <a href="mailto:support@localmoves.com" style="color: #667eea;">support@localmoves.com</a> |
+#                         📱 <a href="tel:+911234567890" style="color: #667eea;">+91 123 456 7890</a>
+#                     </p>
+#                 </div>
+               
+#                 <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+#                     <p style="color: #999; font-size: 12px; margin: 5px 0;">
+#                         This email was sent to {email} because a password reset was requested for this account.
+#                     </p>
+#                     <p style="color: #999; font-size: 12px; margin: 5px 0;">
+#                         © 2025 LocalMoves - All Rights Reserved
+#                     </p>
+#                 </div>
+#             </div>
+#             """
+           
+#             # Get custom template or use default
+#             default_subject = "🔐 Password Reset Request - LocalMoves"
+#             template_vars = {
+#                 "user_name": user_name,
+#                 "user_email": email,
+#                 "reset_link": reset_link,
+#                 "expiry_time": "30 minutes"
+#             }
+#             subject, message = get_email_template("password_reset", template_vars, default_subject, email_content)
+           
+#             try:
+#                 frappe.sendmail(
+#                     recipients=[email],
+#                     sender="megha250903@gmail.com",
+#                     subject=subject,
+#                     message=message,
+#                     delayed=False,
+#                     now=True
+#                 )
+#             except Exception as email_error:
+#                 error_msg = str(email_error)
+#                 if "Email Account" in error_msg or "OutgoingEmailError" in str(type(email_error)):
+#                     frappe.log_error(f"Email configuration missing: {error_msg}", "Email Configuration Error")
+#                     return {"success": False, "message": "Email service not configured. Please contact support."}
+#                 else:
+#                     raise
+           
+#             frappe.logger().info(f"Password reset email sent successfully to: {email}")
+           
+#         except Exception as email_error:
+#             frappe.log_error(f"Failed to send password reset email to {email}: {str(email_error)}", "Password Reset Email Error")
+#             return {"success": False, "message": "Failed to send password reset email. Please try again later."}
+
+
+#         return {
+#             "success": True,
+#             "message": "Password reset link has been sent to your email address. Please check your inbox.",
+#             "data": {
+#                 "email": email,
+#                 "reset_token": reset_token  # Optional: Include for testing/development only
+#             }
+#         }
+
+
+#     except Exception as e:
+#         frappe.log_error(f"Forgot Password Error: {str(e)}", "Forgot Password Failed")
+#         return {"success": False, "message": "Failed to process password reset request"}
 
 
 
