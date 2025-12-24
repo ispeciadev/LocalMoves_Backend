@@ -640,33 +640,7 @@ def create_request_with_payment():
         
         # Send payment confirmation email
         try:
-            send_payment_confirmation_email(
-                user_email=email,
-                user_name=full_name,
-                request_id=request_doc.name,
-                payment_data={
-                    'payment_id': payment_doc.name,
-                    'total_amount': payment_amounts["total_amount"],
-                    'deposit_amount': payment_amounts["deposit_amount"],
-                    'remaining_amount': payment_amounts["remaining_amount"],
-                    'deposit_percentage': payment_amounts["deposit_percentage"],
-                    'payment_status': "Deposit Paid" if process_deposit else "Pending",
-                    'deposit_status': "Paid" if process_deposit else "Unpaid",
-                    'deposit_paid': process_deposit
-                },
-                request_data={
-                    'status': initial_status,
-                    'company_name': final_company_name or 'To be assigned',
-                    'pickup_address': pickup_address,
-                    'pickup_city': pickup_city,
-                    'pickup_pincode': pickup_pincode,
-                    'delivery_address': delivery_address,
-                    'delivery_city': delivery_city,
-                    'delivery_pincode': delivery_pincode,
-                    'distance_miles': distance_miles
-                },
-                price_breakdown=price_breakdown
-            )
+            send_payment_confirmation_email(payment_doc, request_doc)
         except Exception as email_error:
             frappe.log_error(f"Payment confirmation email failed: {str(email_error)}")
         
