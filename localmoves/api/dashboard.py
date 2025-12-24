@@ -7210,12 +7210,11 @@ def manage_property_search_template():
 #         frappe.log_error(f"Payment Confirmation Template Error: {str(e)}")
 #         return {"success": False, "message": str(e)}
 
-
 @frappe.whitelist()
 def manage_payment_confirmation_template():
     """
     Manage Payment Confirmation Email Template
-    Used in: payment_handler.py line 382
+    Used in: request_payment.py - send_payment_confirmation_email()
     """
     try:
         check_admin_permission()
@@ -7226,89 +7225,47 @@ def manage_payment_confirmation_template():
         TEMPLATE_NAME = "payment_confirmation"
         TEMPLATE_INFO = {
             "name": "payment_confirmation",
-            "title": "Payment Confirmation Receipt",
-            "file": "payment_handler.py",
-            "line": 382,
+            "title": "Payment Confirmation",
+            "file": "request_payment.py",
             "default_subject": "✅ Payment Confirmed - {request_id}",
             "default_body": """
-            <div style="font-family: Arial, sans-serif; max-width: 700px; background: #f5f5f5; padding: 20px;">
-                <div style="background: white; border-radius: 10px; padding: 30px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-                    <div style="text-align: center; margin-bottom: 30px;">
-                        <h2 style="color: #28a745; margin: 0; font-size: 28px;">✓ Payment Confirmed!</h2>
-                        <p style="color: #666; margin: 10px 0 0 0;">Thank you for your deposit, {user_name}</p>
-                    </div>
-                   
-                    <h3 style="color: #2c3e50; border-bottom: 2px solid #667eea; padding-bottom: 10px;">📋 Request Details</h3>
-                    <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-                        <tr>
-                            <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Request ID:</strong></td>
-                            <td style="padding: 10px; border: 1px solid #dee2e6;">{request_id}</td>
-                        </tr>
-                        <tr style="background-color: #f8f9fa;">
-                            <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Moving Company:</strong></td>
-                            <td style="padding: 10px; border: 1px solid #dee2e6;">{company_name}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Payment Gateway:</strong></td>
-                            <td style="padding: 10px; border: 1px solid #dee2e6;">{payment_gateway}</td>
-                        </tr>
-                        <tr style="background-color: #f8f9fa;">
-                            <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Transaction ID:</strong></td>
-                            <td style="padding: 10px; border: 1px solid #dee2e6;">{transaction_id}</td>
-                        </tr>
-                    </table>
-                   
-                    <h3 style="color: #2c3e50; margin-top: 30px;">💳 Payment Summary</h3>
-                    <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-                        <tr>
-                            <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Total Move Cost:</strong></td>
-                            <td style="padding: 10px; border: 1px solid #dee2e6;">£{total_amount}</td>
-                        </tr>
-                        <tr style="background-color: #d4edda;">
-                            <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Deposit Paid (10%):</strong></td>
-                            <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>£{deposit_amount} ✓</strong></td>
-                        </tr>
-                        <tr style="background-color: #fff3cd;">
-                            <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Remaining Balance:</strong></td>
-                            <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>£{remaining_amount}</strong></td>
-                        </tr>
-                        <tr style="background-color: #f8f9fa;">
-                            <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Payment Date & Time:</strong></td>
-                            <td style="padding: 10px; border: 1px solid #dee2e6;">{payment_date}</td>
-                        </tr>
-                    </table>
-                   
-                    <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                        <h4 style="color: #2c3e50; margin-top: 0;">📍 Pickup Location</h4>
-                        <p style="margin: 5px 0;"><strong>{pickup_address}</strong></p>
-                        <p style="margin: 5px 0; color: #666;">{pickup_city}, {pickup_pincode}</p>
-                    </div>
-                   
-                    <div style="background-color: #ffebee; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                        <h4 style="color: #2c3e50; margin-top: 0;">🎯 Delivery Location</h4>
-                        <p style="margin: 5px 0;"><strong>{delivery_address}</strong></p>
-                        <p style="margin: 5px 0; color: #666;">{delivery_city}, {delivery_pincode}</p>
-                    </div>
-                   
-                    <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
-                        <p style="margin: 0; color: #856404;">
-                            <strong>💰 Important:</strong> The remaining balance of £{remaining_amount} will be collected upon move completion.
-                        </p>
-                    </div>
-                   
-                    <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
-                        <p style="color: #666; font-size: 12px;">
-                            Thank you for choosing LocalMoves!<br/>
-                            For support, contact us at support@localmoves.com
-                        </p>
-                    </div>
-                   
-                    <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-                    <p style="color: #999; font-size: 12px; margin: 0;">© LocalMoves - All Rights Reserved</p>
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+                <h2 style="color: #2c3e50; border-bottom: 2px solid #28a745; padding-bottom: 10px;">
+                    ✅ Payment Confirmed
+                </h2>
+               
+                <div style="background-color: #d4edda; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #28a745;">
+                    <p style="margin: 0; color: #155724;"><strong>Success!</strong> Your payment has been verified and your move is confirmed.</p>
                 </div>
+               
+                <h3 style="color: #2c3e50;">Payment Details</h3>
+                <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                    <tr style="background-color: #f8f9fa;">
+                        <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Total Amount:</strong></td>
+                        <td style="padding: 10px; border: 1px solid #dee2e6;">£{total_amount}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Deposit Paid:</strong></td>
+                        <td style="padding: 10px; border: 1px solid #dee2e6;">£{deposit_amount} ✓</td>
+                    </tr>
+                    <tr style="background-color: #f8f9fa;">
+                        <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Remaining Balance:</strong></td>
+                        <td style="padding: 10px; border: 1px solid #dee2e6;">£{remaining_amount}</td>
+                    </tr>
+                </table>
+               
+                <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                    <p style="margin: 0; color: #856404;">
+                        <strong>💰 Remaining Payment:</strong> The balance will be collected upon move completion.
+                    </p>
+                </div>
+               
+                <p style="color: #666; font-size: 12px; text-align: center; margin-top: 30px;">
+                    Thank you for choosing LocalMoves!<br/>For support, contact us at support@localmoves.com
+                </p>
             </div>
             """,
-            "variables": ["user_name", "company_name", "request_id", "total_amount", "deposit_amount", "remaining_amount", "amount", "transaction_id", "payment_gateway", "payment_date", "pickup_address", "pickup_city", "pickup_pincode", "delivery_address", "delivery_city", "delivery_pincode"]
+            "variables": ["user_name", "request_id", "total_amount", "deposit_amount", "remaining_amount", "company_name"]
         }
        
         if action == "get":
@@ -7344,7 +7301,6 @@ def manage_payment_confirmation_template():
                 return {"success": False, "message": "email_subject and email_body are required"}
            
             try:
-                # Check if document with this template_name already exists
                 existing = frappe.db.sql("""
                     SELECT name FROM `tabEmail Template Config`
                     WHERE template_name = %s
@@ -7352,14 +7308,12 @@ def manage_payment_confirmation_template():
                 """, TEMPLATE_NAME, as_dict=True)
                
                 if existing:
-                    # Update existing document directly via database
                     frappe.db.sql("""
                         UPDATE `tabEmail Template Config`
                         SET email_subject = %s, email_body = %s, modified = NOW()
                         WHERE name = %s
                     """, (email_subject, email_body, existing[0]['name']))
                 else:
-                    # Create new document directly via database
                     frappe.db.sql("""
                         INSERT INTO `tabEmail Template Config`
                         (name, template_name, email_subject, email_body, modified, creation, owner, modified_by)
@@ -7367,7 +7321,6 @@ def manage_payment_confirmation_template():
                     """, (TEMPLATE_NAME, TEMPLATE_NAME, email_subject, email_body, frappe.session.user, frappe.session.user))
                
                 frappe.db.commit()
-                frappe.clear_cache()
                
                 return {
                     "success": True,
@@ -7379,10 +7332,8 @@ def manage_payment_confirmation_template():
                 return {"success": False, "message": f"Save error: {str(save_error)}"}
        
         elif action == "reset":
-            if frappe.db.exists("Email Template Config", TEMPLATE_NAME):
-                frappe.delete_doc("Email Template Config", TEMPLATE_NAME, ignore_permissions=True)
-                frappe.db.commit()
-           
+            frappe.db.sql("DELETE FROM `tabEmail Template Config` WHERE template_name = %s", TEMPLATE_NAME)
+            frappe.db.commit()
             return {
                 "success": True,
                 "message": "Payment confirmation email template reset to default"
@@ -7391,10 +7342,16 @@ def manage_payment_confirmation_template():
         elif action == "preview":
             sample_variables = data.get("sample_variables", {})
            
-            if frappe.db.exists("Email Template Config", TEMPLATE_NAME):
-                template_doc = frappe.get_doc("Email Template Config", TEMPLATE_NAME)
-                template_html = template_doc.email_body
-                template_subject = template_doc.email_subject
+            template = frappe.db.sql("""
+                SELECT email_subject, email_body
+                FROM `tabEmail Template Config`
+                WHERE template_name = %s
+                LIMIT 1
+            """, TEMPLATE_NAME, as_dict=True)
+           
+            if template:
+                template_html = template[0]['email_body']
+                template_subject = template[0]['email_subject']
             else:
                 template_html = TEMPLATE_INFO["default_body"]
                 template_subject = TEMPLATE_INFO["default_subject"]
@@ -7577,6 +7534,239 @@ def manage_payment_request_template():
     except Exception as e:
         frappe.log_error(f"Payment Request Template Error: {str(e)}")
         return {"success": False, "message": str(e)}
+
+
+
+
+@frappe.whitelist()
+def manage_request_confirmation_template(action="get", email_subject=None, email_body=None):
+    """Manage request confirmation email template
+   
+    Actions:
+    - get: Retrieve current template (custom or default)
+    - update: Update template with new content
+    - reset: Reset to default template
+    - preview: Preview template with sample data
+    """
+   
+    try:
+        TEMPLATE_NAME = "request_confirmation"
+       
+        DEFAULT_SUBJECT = "🚚 Logistics Request Confirmation - {request_id}"
+       
+        DEFAULT_BODY = """<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+    <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
+        🚚 Logistics Request Confirmation
+    </h2>
+   
+    <p>Dear <strong>{user_name}</strong>,</p>
+   
+    <p>Your logistics request has been created successfully!</p>
+   
+    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+        <h3 style="color: #2c3e50; margin-top: 0;">Request Details</h3>
+        <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+                <td style="padding: 8px; font-weight: bold; width: 40%;">Request ID:</td>
+                <td style="padding: 8px;">{request_id}</td>
+            </tr>
+            <tr style="background-color: white;">
+                <td style="padding: 8px; font-weight: bold;">Status:</td>
+                <td style="padding: 8px;"><span style="background-color: #28a745; color: white; padding: 3px 10px; border-radius: 3px; font-size: 12px;">{status}</span></td>
+            </tr>
+            <tr>
+                <td style="padding: 8px; font-weight: bold;">Item Description:</td>
+                <td style="padding: 8px;">{item_description}</td>
+            </tr>
+            <tr style="background-color: white;">
+                <td style="padding: 8px; font-weight: bold;">Service Type:</td>
+                <td style="padding: 8px;">{service_type}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px; font-weight: bold;">Assigned Company:</td>
+                <td style="padding: 8px;">{company_name}</td>
+            </tr>
+            <tr style="background-color: white;">
+                <td style="padding: 8px; font-weight: bold;">Expected Delivery:</td>
+                <td style="padding: 8px;">{delivery_date}</td>
+            </tr>
+        </table>
+    </div>
+   
+    <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0;">
+        <h3 style="color: #2c3e50; margin-top: 0;">📍 Pickup Location</h3>
+        <p style="margin: 5px 0;"><strong>{pickup_address}</strong></p>
+        <p style="margin: 5px 0; color: #666;">{pickup_city}, PIN: {pickup_pincode}</p>
+    </div>
+   
+    <div style="background-color: #ffebee; padding: 15px; border-radius: 5px; margin: 20px 0;">
+        <h3 style="color: #2c3e50; margin-top: 0;">🎯 Delivery Location</h3>
+        <p style="margin: 5px 0;"><strong>{delivery_address}</strong></p>
+        <p style="margin: 5px 0; color: #666;">{delivery_city}, PIN: {delivery_pincode}</p>
+    </div>
+   
+    <div style="text-align: center; margin: 30px 0;">
+        <h3 style="color: #2c3e50;">Route Map</h3>
+        <a href="{route_map_url}" target="_blank" style="display: inline-block; text-decoration: none;">
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 60px 20px; border-radius: 8px; color: white; font-size: 18px; margin: 10px 0;">
+                🗺️ Click to View Route Map<br/>
+                <span style="font-size: 14px; opacity: 0.9;">From {pickup_city} to {delivery_city}</span>
+            </div>
+        </a>
+    </div>
+   
+    <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
+        <p style="margin: 0; color: #856404;">
+            <strong>📱 Track Your Request:</strong> You can track your request status anytime by logging into your account.
+        </p>
+    </div>
+   
+    <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+        <p style="color: #666; font-size: 12px;">
+            This is an automated email. Please do not reply to this message.<br/>
+            For support, contact us at support@localmoves.com
+        </p>
+    </div>
+</div>"""
+       
+        if action == "get":
+            # Get current template from database
+            template = frappe.db.sql("""
+                SELECT email_subject, email_body
+                FROM `tabEmail Template Config`
+                WHERE template_name = %s
+                LIMIT 1
+            """, TEMPLATE_NAME, as_dict=True)
+           
+            if template:
+                return {
+                    "success": True,
+                    "template_name": TEMPLATE_NAME,
+                    "email_subject": template[0]['email_subject'],
+                    "email_body": template[0]['email_body'],
+                    "is_custom": True
+                }
+            else:
+                return {
+                    "success": True,
+                    "template_name": TEMPLATE_NAME,
+                    "email_subject": DEFAULT_SUBJECT,
+                    "email_body": DEFAULT_BODY,
+                    "is_custom": False,
+                    "message": "Using default template. Click 'Update' to create a custom template."
+                }
+       
+        elif action == "update":
+            if not email_subject or not email_body:
+                return {"success": False, "message": "Subject and body are required"}
+           
+            # Check if template exists
+            template = frappe.db.sql("""
+                SELECT name FROM `tabEmail Template Config`
+                WHERE template_name = %s
+                LIMIT 1
+            """, TEMPLATE_NAME, as_dict=True)
+           
+            if template:
+                # Update existing template
+                frappe.db.sql("""
+                    UPDATE `tabEmail Template Config`
+                    SET email_subject = %s, email_body = %s, modified = %s
+                    WHERE template_name = %s
+                """, (email_subject, email_body, frappe.utils.now(), TEMPLATE_NAME))
+            else:
+                # Create new template
+                frappe.db.sql("""
+                    INSERT INTO `tabEmail Template Config`
+                    (name, template_name, email_subject, email_body, creation, modified)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (TEMPLATE_NAME, TEMPLATE_NAME, email_subject, email_body, frappe.utils.now(), frappe.utils.now()))
+           
+            frappe.db.commit()
+           
+            return {
+                "success": True,
+                "message": "Request confirmation template updated successfully",
+                "template_name": TEMPLATE_NAME,
+                "email_subject": email_subject,
+                "email_body": email_body
+            }
+       
+        elif action == "reset":
+            # Delete custom template to revert to defaults
+            frappe.db.sql("""
+                DELETE FROM `tabEmail Template Config`
+                WHERE template_name = %s
+            """, TEMPLATE_NAME)
+           
+            frappe.db.commit()
+           
+            return {
+                "success": True,
+                "message": "Template reset to default",
+                "template_name": TEMPLATE_NAME,
+                "email_subject": DEFAULT_SUBJECT,
+                "email_body": DEFAULT_BODY
+            }
+       
+        elif action == "preview":
+            # Get current template
+            template = frappe.db.sql("""
+                SELECT email_subject, email_body
+                FROM `tabEmail Template Config`
+                WHERE template_name = %s
+                LIMIT 1
+            """, TEMPLATE_NAME, as_dict=True)
+           
+            if template:
+                template_html = template[0]['email_body']
+                template_subject = template[0]['email_subject']
+            else:
+                template_html = DEFAULT_BODY
+                template_subject = DEFAULT_SUBJECT
+           
+            # Sample variables for preview
+            sample_variables = {
+                "user_name": "John Doe",
+                "request_id": "REQ-2024-001",
+                "status": "Pending",
+                "item_description": "3 BHK House Furniture",
+                "service_type": "Full Service",
+                "company_name": "Local Movers Co.",
+                "delivery_date": "2024-12-20",
+                "pickup_address": "123 Main St",
+                "pickup_city": "Mumbai",
+                "pickup_pincode": "400001",
+                "delivery_address": "456 Park Ave",
+                "delivery_city": "Bangalore",
+                "delivery_pincode": "560001",
+                "route_map_url": "https://www.openstreetmap.org/directions"
+            }
+           
+            preview_html = template_html
+            preview_subject = template_subject
+           
+            for var_name, var_value in sample_variables.items():
+                placeholder = "{" + var_name + "}"
+                preview_html = preview_html.replace(placeholder, str(var_value))
+                preview_subject = preview_subject.replace(placeholder, str(var_value))
+           
+            return {
+                "success": True,
+                "preview_subject": preview_subject,
+                "preview_html": preview_html
+            }
+       
+        else:
+            return {"success": False, "message": f"Invalid action: {action}"}
+           
+    except Exception as e:
+        frappe.log_error(f"Request Confirmation Template Error: {str(e)}")
+        return {"success": False, "message": str(e)}
+
+
+
+
 
 
 

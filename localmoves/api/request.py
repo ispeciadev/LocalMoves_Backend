@@ -1930,28 +1930,7 @@ def create_request():
         frappe.db.commit()
 
         # 🔥 SEND CONFIRMATION EMAIL WITH ROUTE MAP
-        try:
-            send_request_confirmation_email(
-                user_email=email,
-                user_name=full_name,
-                request_id=request_doc.name,
-                pickup_address=pickup_address,
-                pickup_city=pickup_city,
-                pickup_pincode=pickup_pincode,
-                delivery_address=delivery_address,
-                delivery_city=delivery_city,
-                delivery_pincode=delivery_pincode,
-                item_description=item_description,
-                delivery_date=delivery_date,
-                company_name=final_company_name,
-                status=initial_status,
-                property_size=property_size,
-                service_type=service_type or "Standard"
-            )
-        except Exception as email_error:
-            frappe.log_error(f"Email sending failed for {request_doc.name}: {str(email_error)}")
-            # Don't fail the request creation if email fails
-
+       
         return {
             "success": True,
             "message": f"Request created successfully{assignment_message}. Confirmation email sent to {email}.",

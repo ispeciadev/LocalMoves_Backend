@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 import traceback
 
+
 # Import existing functions from request.py
 from localmoves.api.request import (
     get_user_from_token,
@@ -18,25 +19,29 @@ from localmoves.api.request import (
 from localmoves.api.request_pricing import calculate_comprehensive_price
 from localmoves.api.company import search_companies_with_cost
 
+
 # ==================== HELPER FUNCTIONS ====================
+
 
 def calculate_payment_amounts(total_amount):
     """Calculate deposit and remaining amounts using admin-configured deposit percentage"""
     # Import from dashboard
     from localmoves.api.dashboard import get_deposit_percentage
-    
+   
     # Get current admin-configured percentage
     deposit_percentage = get_deposit_percentage()
-    
+   
     deposit = round(total_amount * (deposit_percentage / 100), 2)
     remaining = round(total_amount - deposit, 2)
-    
+   
     return {
         "total_amount": total_amount,
         "deposit_amount": deposit,
         "remaining_amount": remaining,
         "deposit_percentage": deposit_percentage
     }
+
+
 
 
 def get_email_template(template_name, variables=None, default_subject="", default_body=""):
@@ -72,43 +77,46 @@ def get_email_template(template_name, variables=None, default_subject="", defaul
         frappe.log_error(f"Email Template Error: {str(e)}")
         return default_subject, default_body
 
+
 def create_payment_transaction(request_id, company_name, payment_amounts, user_info):
     """Create a Payment Transaction record for the logistics request"""
     try:
         # Get dynamic config from dashboard
         from localmoves.api.dashboard import get_system_config_from_db
         config = get_system_config_from_db()
-        
+       
         payment_doc = frappe.get_doc({
             "doctype": "Payment Transaction",
             "request_id": request_id,
             "company_name": company_name,
             "user_email": user_info.get("email"),
-            
+           
             # Payment amounts
             "total_amount": payment_amounts["total_amount"],
             "deposit_amount": payment_amounts["deposit_amount"],
             "remaining_amount": payment_amounts["remaining_amount"],
-            
+           
             # Status
             "payment_status": "Pending",
             "deposit_status": "Unpaid",
             "balance_status": "Unpaid",
-            
+           
             # Metadata - NOW DYNAMIC from database
             "currency": config.get('currency', 'GBP'),
             "created_at": datetime.now(),
             "updated_at": datetime.now()
         })
-        
+       
         payment_doc.insert(ignore_permissions=True)
         frappe.db.commit()
-        
+       
         return payment_doc
-        
+       
     except Exception as e:
         print(f"Create Payment Transaction Error: {str(e)}")
         raise
+
+
 
 
 def update_request_with_payment(request_doc, payment_doc):
@@ -119,303 +127,74 @@ def update_request_with_payment(request_doc, payment_doc):
         request_doc.db_set('total_amount', payment_doc.total_amount, update_modified=False)
         request_doc.db_set('deposit_paid', 0, update_modified=False)
         request_doc.db_set('remaining_amount', payment_doc.total_amount, update_modified=False)
-        
+       
         frappe.db.commit()
-        
+       
     except Exception as e:
         print(f"Update Request with Payment Error: {str(e)}")
         raise
 
 
-# def send_payment_confirmation_email(user_email, user_name, request_id, payment_data, request_data, price_breakdown):
-#     """
-#     Send payment confirmation email to user
-    
-#     Args:
-#         user_email: User's email
-#         user_name: User's full name
-#         request_id: Request ID
-#         payment_data: Payment information dict
-#         request_data: Request details dict
-#         price_breakdown: Pricing breakdown dict
-#     """
-#     try:
-#         # Format amounts
-#         total_amount = f"£{payment_data['total_amount']:.2f}"
-#         deposit_amount = f"£{payment_data['deposit_amount']:.2f}"
-#         remaining_amount = f"£{payment_data['remaining_amount']:.2f}"
-#         deposit_pct = payment_data.get('deposit_percentage', 10)
-        
-#         # Build email subject
-#         subject = f"Payment Confirmation - Request #{request_id}"
-        
-#         # Build email message
-#         message = f"""
-#         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-#             <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
-#                 Payment Confirmation
-#             </h2>
-            
-#             <p>Dear {user_name},</p>
-            
-#             <p>Thank you for creating your move request with us! Your payment details have been recorded successfully.</p>
-            
-#             <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
-#                 <h3 style="color: #2c3e50; margin-top: 0;">Request Details</h3>
-#                 <table style="width: 100%; border-collapse: collapse;">
-#                     <tr>
-#                         <td style="padding: 8px 0; font-weight: bold;">Request ID:</td>
-#                         <td style="padding: 8px 0;">{request_id}</td>
-#                     </tr>
-#                     <tr>
-#                         <td style="padding: 8px 0; font-weight: bold;">Status:</td>
-#                         <td style="padding: 8px 0;">{request_data.get('status', 'Pending')}</td>
-#                     </tr>
-#                     <tr>
-#                         <td style="padding: 8px 0; font-weight: bold;">Company:</td>
-#                         <td style="padding: 8px 0;">{request_data.get('company_name', 'To be assigned')}</td>
-#                     </tr>
-#                 </table>
-#             </div>
-            
-#             <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
-#                 <h3 style="color: #2c3e50; margin-top: 0;">Payment Summary</h3>
-#                 <table style="width: 100%; border-collapse: collapse;">
-#                     <tr>
-#                         <td style="padding: 8px 0; font-weight: bold;">Total Amount:</td>
-#                         <td style="padding: 8px 0; font-size: 18px; color: #2c3e50;">{total_amount}</td>
-#                     </tr>
-#                     <tr style="background-color: rgba(52, 152, 219, 0.1);">
-#                         <td style="padding: 8px 0; font-weight: bold;">Deposit Required ({deposit_pct}%):</td>
-#                         <td style="padding: 8px 0; font-size: 16px; color: #3498db;">{deposit_amount}</td>
-#                     </tr>
-#                     <tr>
-#                         <td style="padding: 8px 0; font-weight: bold;">Remaining Balance:</td>
-#                         <td style="padding: 8px 0;">{remaining_amount}</td>
-#                     </tr>
-#                 </table>
-#             </div>
-            
-#             {'<div style="background-color: #d4edda; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #28a745;"><p style="margin: 0; color: #155724;"><strong>✓ Deposit Paid:</strong> Your ' + str(deposit_pct) + '% deposit has been successfully processed.</p></div>' if payment_data.get('deposit_paid') else '<div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;"><p style="margin: 0; color: #856404;"><strong>⚠ Action Required:</strong> Please pay the ' + str(deposit_pct) + '% deposit of ' + deposit_amount + ' to confirm your booking.</p></div>'}
-            
-#             <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #6c757d;">
-#                 <p><strong>Need help?</strong> Contact us at support@localmoves.com</p>
-#             </div>
-#         </div>
-#         """
-        
-#         # Send email
-#         frappe.sendmail(
-#             recipients=[user_email],
-#             subject=subject,
-#             message=message,
-#             now=True
-#         )
-        
-#         print(f"Payment confirmation email sent to {user_email}")
-        
-#     except Exception as e:
-#         print(f"Failed to send payment confirmation email: {str(e)}\n{traceback.format_exc()}")
 
-def get_email_template(template_name, variables=None, default_subject="", default_body=""):
-    """
-    Get email template from database, or use default if not found.
-    Replaces variables in template if provided.
-    """
-    try:
-        # Query custom template from database
-        result = frappe.db.sql("""
-            SELECT email_subject, email_body
-            FROM `tabEmail Template Config`
-            WHERE template_name = %s
-            LIMIT 1
-        """, template_name, as_dict=True)
-       
-        if result:
-            subject = result[0]['email_subject']
-            body = result[0]['email_body']
-        else:
-            subject = default_subject
-            body = default_body
-       
-        # Replace variables if provided
-        if variables and isinstance(variables, dict):
-            for var_name, var_value in variables.items():
-                placeholder = "{" + var_name + "}"
-                subject = subject.replace(placeholder, str(var_value))
-                body = body.replace(placeholder, str(var_value))
-       
-        return subject, body
-    except Exception as e:
-        frappe.log_error(f"Email Template Error: {str(e)}")
-        return default_subject, default_body
+
 
 
 def send_payment_confirmation_email(payment_doc, request_doc):
-    """Send payment confirmation email with receipt"""
+    """Send payment confirmation email using dynamic template"""
     try:
         user_email = payment_doc.user_email
-       
-        # Parse request data
-        request_data = {}
-        try:
-            request_data = json.loads(payment_doc.request_data) if payment_doc.request_data else {}
-        except:
-            pass
-       
-        user_details = request_data.get('user_details', {})
-        addresses = request_data.get('addresses', {})
-       
-        user_name = user_details.get('full_name', 'Customer')
-        pickup_address = addresses.get('pickup_address', '')
-        pickup_city = addresses.get('pickup_city', '')
-        pickup_pincode = addresses.get('pickup_pincode', '')
-        delivery_address = addresses.get('delivery_address', '')
-        delivery_city = addresses.get('delivery_city', '')
-        delivery_pincode = addresses.get('delivery_pincode', '')
-       
-        # Create route map URL
-        osm_map_url = f"https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route={pickup_pincode}%2CUK;{delivery_pincode}%2CUK"
-       
-        email_content = f"""
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-            <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
-                ✅ Payment Confirmed - Move Request Active
-            </h2>
-           
-            <div style="background-color: #d4edda; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #28a745;">
-                <p style="margin: 0; color: #155724; font-size: 16px;">
-                    <strong>Success!</strong> Your payment has been verified and your move is confirmed.
-                </p>
-            </div>
-           
-            <h3 style="color: #2c3e50;">Payment Details</h3>
-            <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-                <tr style="background-color: #f8f9fa;">
-                    <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Payment ID:</strong></td>
-                    <td style="padding: 10px; border: 1px solid #dee2e6;">{payment_doc.name}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Request ID:</strong></td>
-                    <td style="padding: 10px; border: 1px solid #dee2e6;">{request_doc.name}</td>
-                </tr>
-                <tr style="background-color: #f8f9fa;">
-                    <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Company:</strong></td>
-                    <td style="padding: 10px; border: 1px solid #dee2e6;">{payment_doc.company_name}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Payment Gateway:</strong></td>
-                    <td style="padding: 10px; border: 1px solid #dee2e6;">{payment_doc.payment_gateway}</td>
-                </tr>
-                <tr style="background-color: #f8f9fa;">
-                    <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Transaction ID:</strong></td>
-                    <td style="padding: 10px; border: 1px solid #dee2e6;">{payment_doc.external_payment_id}</td>
-                </tr>
-            </table>
-           
-            <h3 style="color: #2c3e50; margin-top: 30px;">💳 Payment Summary</h3>
-            <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-                <tr>
-                    <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Total Amount:</strong></td>
-                    <td style="padding: 10px; border: 1px solid #dee2e6;">£{payment_doc.total_amount:.2f}</td>
-                </tr>
-                <tr style="background-color: #d4edda;">
-                    <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Deposit Paid (10%):</strong></td>
-                    <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>£{payment_doc.deposit_amount:.2f} ✓</strong></td>
-                </tr>
-                <tr style="background-color: #fff3cd;">
-                    <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Remaining Balance:</strong></td>
-                    <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>£{payment_doc.remaining_amount:.2f}</strong></td>
-                </tr>
-                <tr style="background-color: #f8f9fa;">
-                    <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Payment Date:</strong></td>
-                    <td style="padding: 10px; border: 1px solid #dee2e6;">{payment_doc.paid_at.strftime('%d %B %Y, %I:%M %p') if payment_doc.paid_at else 'N/A'}</td>
-                </tr>
-            </table>
-           
-            <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                <h4 style="color: #2c3e50; margin-top: 0;">📍 Pickup Location</h4>
-                <p style="margin: 5px 0;"><strong>{pickup_address}</strong></p>
-                <p style="margin: 5px 0; color: #666;">{pickup_city}, {pickup_pincode}</p>
-            </div>
-           
-            <div style="background-color: #ffebee; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                <h4 style="color: #2c3e50; margin-top: 0;">🎯 Delivery Location</h4>
-                <p style="margin: 5px 0;"><strong>{delivery_address}</strong></p>
-                <p style="margin: 5px 0; color: #666;">{delivery_city}, {delivery_pincode}</p>
-            </div>
-           
-            <div style="text-align: center; margin: 30px 0;">
-                <h3 style="color: #2c3e50;">Route Map</h3>
-                <a href="{osm_map_url}" target="_blank" style="display: inline-block; text-decoration: none;">
-                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 20px; border-radius: 8px; color: white; font-size: 16px;">
-                        🗺️ View Route Map
-                    </div>
-                </a>
-            </div>
-           
-            <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
-                <p style="margin: 0; color: #856404;">
-                    <strong>💰 Remaining Payment:</strong> The balance of £{payment_doc.remaining_amount:.2f} will be collected upon move completion.
-                </p>
-            </div>
-           
-            <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
-                <p style="color: #666; font-size: 12px;">
-                    Thank you for choosing LocalMoves!<br/>
-                    For support, contact us at support@localmoves.com
-                </p>
-            </div>
-        </div>
-        """
-       
-        # Get custom template or use default
-        default_subject = f"✅ Payment Confirmed - {payment_doc.name}"
+        user_name = request_doc.full_name or "Customer"
+        
+        # Template variables
         template_vars = {
             "user_name": user_name,
-            "company_name": payment_doc.company_name or "N/A",
-            "request_id": payment_doc.logistics_request or "N/A",
-            "total_amount": f"{payment_doc.total_amount:.2f}",
+            "request_id": request_doc.name,
+            "amount": f"{payment_doc.total_amount:.2f}",
+            "transaction_id": payment_doc.name,
+            "payment_date": datetime.now().strftime("%d %B %Y, %I:%M %p"),
             "deposit_amount": f"{payment_doc.deposit_amount:.2f}",
             "remaining_amount": f"{payment_doc.remaining_amount:.2f}",
-            "amount": f"{payment_doc.amount_paid:.2f}",
-            "transaction_id": payment_doc.external_payment_id or "N/A",
-            "payment_gateway": payment_doc.payment_gateway or "N/A",
-            "payment_date": payment_doc.paid_at.strftime("%d %B %Y, %I:%M %p") if payment_doc.paid_at else datetime.now().strftime("%d %B %Y"),
-            "pickup_address": pickup_address,
-            "pickup_city": pickup_city,
-            "pickup_pincode": pickup_pincode,
-            "delivery_address": delivery_address,
-            "delivery_city": delivery_city,
-            "delivery_pincode": delivery_pincode
+            "company_name": payment_doc.company_name or "N/A"
         }
-        subject, message = get_email_template("payment_confirmation", template_vars, default_subject, email_content)
-       
-        try:
-            frappe.sendmail(
-                recipients=[user_email],
-                sender="megha250903@gmail.com",
-                subject=subject,
-                message=message,
-                delayed=False,
-                now=True
-            )
-        except Exception as email_error:
-            error_msg = str(email_error)
-            if "Email Account" in error_msg or "OutgoingEmailError" in str(type(email_error)):
-                frappe.log_error(f"Email configuration missing: {error_msg}", "Email Configuration Error")
-            else:
-                raise
-       
+        
+        # Default email template (simple and clean)
+        default_subject = f"✅ Payment Confirmed - {request_doc.name}"
+        default_body = """
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h2 style="color: #28a745; margin: 0 0 20px 0;">✓ Payment Confirmed</h2>
+            <p style="font-size: 16px; color: #333; margin: 10px 0;">Amount: £{amount}</p>
+            <p style="font-size: 14px; color: #666; margin: 10px 0;">Transaction ID: {transaction_id}</p>
+            <p style="font-size: 14px; color: #666; margin: 10px 0;">Date: {payment_date}</p>
+        </div>
+        """
+        
+        # Get custom template or use default
+        subject, message = get_email_template("payment_confirmation", template_vars, default_subject, default_body)
+        
+        # Send email
+        frappe.sendmail(
+            recipients=[user_email],
+            sender="megha250903@gmail.com",
+            subject=subject,
+            message=message,
+            delayed=False,
+            now=True
+        )
+        
         frappe.logger().info(f"Payment confirmation email sent to {user_email}")
-       
+        
     except Exception as e:
-        frappe.log_error(f"Payment Email Error: {str(e)}")
+        frappe.log_error(f"Payment Email Error: {str(e)}\n{traceback.format_exc()}", "Payment Confirmation Email Failed")
+
+
+
+
 
 
 
 
 # ==================== MAIN API: CREATE REQUEST WITH PAYMENT ====================
+
 
 @frappe.whitelist(allow_guest=True)
 def create_request_with_payment():
@@ -426,22 +205,22 @@ def create_request_with_payment():
     try:
         # Step 1: Authenticate user
         user_info = get_user_from_token()
-        
+       
         if not user_info or not isinstance(user_info, dict):
             return {"success": False, "message": "Authentication failed"}
-        
+       
         if user_info.get("role") not in ["User", "Admin"]:
             return {"success": False, "message": "Only Users can create requests"}
-        
+       
         # Step 2: Parse request data
         data = frappe.request.get_json() or {}
-        
+       
         # Extract user details
         user_details = data.get('user_details', {})
         full_name = user_details.get('full_name')
         email = user_details.get('email')
         phone = user_details.get('phone')
-        
+       
         # Extract addresses
         addresses = data.get('addresses', {})
         pickup_address = addresses.get('pickup_address')
@@ -450,47 +229,47 @@ def create_request_with_payment():
         delivery_address = addresses.get('delivery_address')
         delivery_city = addresses.get('delivery_city')
         delivery_pincode = addresses.get('delivery_pincode')
-        
+       
         # Validate required fields
         if not all([full_name, email, phone, pickup_address, pickup_city, pickup_pincode,
                    delivery_address, delivery_city, delivery_pincode]):
             return {"success": False, "message": "Missing required fields"}
-        
+       
         # Get optional fields
         delivery_date = data.get('delivery_date')
         special_instructions = data.get('special_instructions')
         requested_company_name = data.get('company_name')
         distance_miles = float(data.get('distance_miles', 0))
-        
+       
         # Payment fields - ONLY FOR DEPOSIT (NOW DYNAMIC %)
         payment_method = data.get('payment_method', 'Stripe')
         process_deposit = data.get('process_deposit', False)
         transaction_ref = data.get('transaction_ref')
         gateway_response = data.get('payment_gateway_response', {})
-        
+       
         # Get pricing data
         pricing_data = data.get('pricing_data', {})
         collection_assessment = data.get('collection_assessment', {})
         delivery_assessment = data.get('delivery_assessment', {})
         move_date_data = data.get('move_date_data', {})
-        
+       
         # Get PRE-CALCULATED price breakdown from frontend
         price_breakdown = data.get('price_breakdown', {})
-        
+       
         # Generate item description
         item_description = generate_item_description(pricing_data)
-        
+       
         # Step 3: Validate company and get final price
         if not requested_company_name:
             return {
                 "success": False,
                 "message": "Company selection required"
             }
-        
+       
         # Validate company exists
         if not frappe.db.exists("Logistics Company", requested_company_name):
             return {"success": False, "message": f"Company '{requested_company_name}' does not exist"}
-        
+       
         # Check subscription
         sub_check = check_subscription_active(requested_company_name)
         if not sub_check.get("active", False):
@@ -498,19 +277,19 @@ def create_request_with_payment():
                 "success": False,
                 "message": f"Cannot assign to {requested_company_name}. {sub_check.get('message')}"
             }
-        
+       
         # Validate price_breakdown exists and has final_total
         if not price_breakdown or 'final_total' not in price_breakdown:
             return {
                 "success": False,
                 "message": "price_breakdown with final_total is required."
             }
-        
+       
         final_total = float(price_breakdown['final_total'])
-        
+       
         # Check capacity
         limit_check = check_view_limit(requested_company_name)
-        
+       
         # Determine assignment status
         if limit_check.get("allowed", False):
             final_company_name = requested_company_name
@@ -524,7 +303,7 @@ def create_request_with_payment():
             assigned_date_value = None
             previously_assigned_to = requested_company_name
             assignment_message = f" but {requested_company_name} is at capacity."
-        
+       
         # Step 4: Create logistics request
         request_doc = frappe.get_doc({
             "doctype": "Logistics Request",
@@ -532,7 +311,7 @@ def create_request_with_payment():
             "full_name": full_name,
             "email": email,
             "phone": phone,
-            
+           
             # Addresses
             "pickup_pincode": pickup_pincode,
             "pickup_address": pickup_address,
@@ -540,55 +319,55 @@ def create_request_with_payment():
             "delivery_pincode": delivery_pincode,
             "delivery_address": delivery_address,
             "delivery_city": delivery_city,
-            
+           
             # Move details
             "item_description": item_description,
             "delivery_date": delivery_date,
             "special_instructions": special_instructions,
-            
+           
             # Assignment
             "company_name": final_company_name,
             "status": initial_status,
             "priority": "Medium",
-            
+           
             # Pricing (store as JSON)
             "pricing_data": json.dumps(pricing_data),
             "collection_assessment": json.dumps(collection_assessment),
             "delivery_assessment": json.dumps(delivery_assessment),
             "move_date_data": json.dumps(move_date_data),
             "distance_miles": distance_miles,
-            
+           
             # Price breakdown
             "estimated_cost": final_total,
             "price_breakdown": json.dumps(price_breakdown),
-            
+           
             # Payment fields
             "payment_gateway": payment_method,
             "payment_status": "Pending",
-            
+           
             # Timestamps
             "created_at": datetime.now(),
             "updated_at": datetime.now(),
             "assigned_date": assigned_date_value,
         })
-        
+       
         # Set previously_assigned_to if needed
         if previously_assigned_to and frappe.db.has_column("Logistics Request", "previously_assigned_to"):
             request_doc.previously_assigned_to = previously_assigned_to
-        
+       
         # Insert request
         request_doc.insert(ignore_permissions=True)
-        
+       
         # Step 5: Create Payment Transaction (USES DYNAMIC DEPOSIT %)
         payment_amounts = calculate_payment_amounts(final_total)
-        
+       
         payment_doc = create_payment_transaction(
             request_id=request_doc.name,
             company_name=requested_company_name,
             payment_amounts=payment_amounts,
             user_info=user_info
         )
-        
+       
         # Step 6: Process deposit if payment requested
         if process_deposit and transaction_ref:
             # Mark deposit as paid
@@ -598,10 +377,10 @@ def create_request_with_payment():
             payment_doc.db_set('payment_method', payment_method, update_modified=False)
             payment_doc.db_set('payment_status', "Deposit Paid", update_modified=False)
             payment_doc.db_set('balance_status', "Unpaid", update_modified=False)
-            
+           
             if gateway_response:
                 payment_doc.db_set('gateway_response', json.dumps(gateway_response), update_modified=False)
-            
+           
             # Update request
             request_doc.db_set('payment_status', "Deposit Paid", update_modified=False)
             request_doc.db_set('deposit_paid', payment_doc.deposit_amount, update_modified=False)
@@ -609,13 +388,13 @@ def create_request_with_payment():
             request_doc.db_set('payment_verified_at', datetime.now(), update_modified=False)
         else:
             update_request_with_payment(request_doc, payment_doc)
-        
+       
         # Increment view count if assigned
         if final_company_name and initial_status == "Assigned":
             increment_view_count(final_company_name)
-        
+       
         frappe.db.commit()
-        
+       
         # Step 7: Send confirmation emails
         try:
             send_request_confirmation_email(
@@ -637,13 +416,17 @@ def create_request_with_payment():
             )
         except Exception as email_error:
             frappe.log_error(f"Standard confirmation email failed: {str(email_error)}")
-        
+       
         # Send payment confirmation email
         try:
+            print(f"🔥🔥🔥 STARTING PAYMENT EMAIL FOR REQUEST {request_doc.name}")
             send_payment_confirmation_email(payment_doc, request_doc)
+            print(f"✅✅✅ PAYMENT EMAIL COMPLETED FOR REQUEST {request_doc.name}")
         except Exception as email_error:
-            frappe.log_error(f"Payment confirmation email failed: {str(email_error)}")
-        
+            print(f"❌❌❌ PAYMENT EMAIL EXCEPTION: {str(email_error)}\n{traceback.format_exc()}")
+            frappe.logger().error(f"Payment confirmation email failed: {str(email_error)}\n{traceback.format_exc()}")
+            frappe.log_error(f"Payment confirmation email failed: {str(email_error)}\n{traceback.format_exc()}", "Payment Email Error")
+       
         # Step 8: Return response
         deposit_pct = payment_amounts["deposit_percentage"]
         deposit_status_msg = ""
@@ -651,7 +434,7 @@ def create_request_with_payment():
             deposit_status_msg = f" {deposit_pct}% deposit (£{payment_amounts['deposit_amount']:.2f}) paid successfully."
         else:
             deposit_status_msg = f" Please pay {deposit_pct}% deposit (£{payment_amounts['deposit_amount']:.2f}) to confirm."
-        
+       
         return {
             "success": True,
             "message": f"Request created successfully{assignment_message}.{deposit_status_msg}",
@@ -660,7 +443,7 @@ def create_request_with_payment():
                 "status": request_doc.status,
                 "company_name": final_company_name,
                 "will_appear_in_blurred": previously_assigned_to is not None,
-                
+               
                 # Payment information - DYNAMIC DEPOSIT %
                 "payment": {
                     "payment_id": payment_doc.name,
@@ -675,12 +458,12 @@ def create_request_with_payment():
                     "currency": "GBP",
                     "deposit_paid": process_deposit
                 },
-                
+               
                 # Pricing breakdown
                 "price_breakdown": price_breakdown
             }
         }
-        
+       
     except frappe.AuthenticationError as e:
         frappe.log_error(f"Authentication error: {str(e)}")
         return {"success": False, "message": f"Authentication error: {str(e)}"}
@@ -690,7 +473,10 @@ def create_request_with_payment():
         return {"success": False, "message": f"Failed to create request: {str(e)}"}
 
 
+
+
 # ==================== OTHER PAYMENT APIS ====================
+
 
 @frappe.whitelist(allow_guest=True)
 def process_full_payment():
@@ -698,56 +484,56 @@ def process_full_payment():
     try:
         user_info = get_user_from_token()
         data = get_json_data()
-        
+       
         payment_id = data.get("payment_id")
         payment_method = data.get("payment_method")
         transaction_ref = data.get("transaction_ref")
         gateway_response = data.get("payment_gateway_response", {})
-        
+       
         if not payment_id:
             return {"success": False, "message": "payment_id is required"}
-        
+       
         if not frappe.db.exists("Payment Transaction", payment_id):
             return {"success": False, "message": "Payment not found"}
-        
+       
         payment_doc = frappe.get_doc("Payment Transaction", payment_id)
-        
+       
         # Verify user owns this payment
         if payment_doc.user_email != user_info.get("email"):
             return {"success": False, "message": "Unauthorized access"}
-        
+       
         # Check deposit paid
         if payment_doc.deposit_status != "Paid":
             return {"success": False, "message": "Deposit must be paid first"}
-        
+       
         # Check if already fully paid
         if payment_doc.balance_status == "Paid":
             return {"success": False, "message": "Balance already paid"}
-        
+       
         # Update payment transaction
         payment_doc.db_set('balance_status', "Paid", update_modified=False)
         payment_doc.db_set('balance_paid_at', datetime.now(), update_modified=False)
         payment_doc.db_set('balance_transaction_ref', transaction_ref, update_modified=False)
         payment_doc.db_set('payment_method', payment_method, update_modified=False)
         payment_doc.db_set('updated_at', datetime.now(), update_modified=False)
-        
+       
         if gateway_response:
             current_response = json.loads(payment_doc.gateway_response or "{}")
             current_response["balance_payment"] = gateway_response
             payment_doc.db_set('gateway_response', json.dumps(current_response), update_modified=False)
-        
+       
         # Update overall status
         payment_doc.db_set('payment_status', "Fully Paid", update_modified=False)
         payment_doc.db_set('fully_paid_at', datetime.now(), update_modified=False)
-        
+       
         # Update linked request
         if payment_doc.request_id:
             request_doc = frappe.get_doc("Logistics Request", payment_doc.request_id)
             request_doc.db_set('payment_status', "Fully Paid", update_modified=False)
             request_doc.db_set('remaining_amount', 0, update_modified=False)
-        
+       
         frappe.db.commit()
-        
+       
         return {
             "success": True,
             "message": "Full payment processed successfully",
@@ -758,11 +544,13 @@ def process_full_payment():
                 "fully_paid_at": str(payment_doc.fully_paid_at)
             }
         }
-        
+       
     except Exception as e:
         print(f"Process Full Payment Error: {str(e)}\n{traceback.format_exc()}")
         frappe.db.rollback()
         return {"success": False, "message": f"Failed to process payment: {str(e)}"}
+
+
 
 
 @frappe.whitelist(allow_guest=True)
@@ -771,31 +559,31 @@ def get_payment_status():
     try:
         user_info = get_user_from_token()
         data = get_json_data()
-        
+       
         payment_id = data.get("payment_id")
-        
+       
         if not payment_id:
             return {"success": False, "message": "payment_id is required"}
-        
+       
         if not frappe.db.exists("Payment Transaction", payment_id):
             return {"success": False, "message": "Payment not found"}
-        
+       
         payment_doc = frappe.get_doc("Payment Transaction", payment_id)
-        
+       
         # Check permissions
         user_email = user_info.get("email")
         is_owner = payment_doc.user_email == user_email
         is_admin = user_info.get("role") == "Admin"
-        
+       
         # Check if user is company manager
         is_manager = False
         if payment_doc.company_name:
             company = frappe.get_doc("Logistics Company", payment_doc.company_name)
             is_manager = company.manager_email == user_email
-        
+       
         if not (is_owner or is_manager or is_admin):
             return {"success": False, "message": "Unauthorized access"}
-        
+       
         return {
             "success": True,
             "data": {
@@ -815,10 +603,12 @@ def get_payment_status():
                 "fully_paid_at": str(payment_doc.fully_paid_at) if payment_doc.fully_paid_at else None
             }
         }
-        
+       
     except Exception as e:
         print(f"Get Payment Status Error: {str(e)}")
         return {"success": False, "message": f"Failed to fetch status: {str(e)}"}
+
+
 
 
 @frappe.whitelist(allow_guest=True)
@@ -827,7 +617,7 @@ def get_my_request_payments():
     try:
         user_info = get_user_from_token()
         user_email = user_info.get("email")
-        
+       
         payments = frappe.get_all(
             "Payment Transaction",
             filters={"user_email": user_email},
@@ -839,13 +629,15 @@ def get_my_request_payments():
             ],
             order_by="created_at desc"
         )
-        
+       
         return {
             "success": True,
             "count": len(payments),
             "data": payments
         }
-        
+       
     except Exception as e:
         print(f"Get My Payments Error: {str(e)}")
         return {"success": False, "message": "Failed to fetch payments"}
+
+
