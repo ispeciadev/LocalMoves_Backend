@@ -1,0 +1,84 @@
+{
+  "name": "Admin Email Campaign",
+  "doctype": "DocType",
+  "module": "Localmoves",
+  "custom": 0,
+  "fields": [
+    {
+      "fieldname": "subject",
+      "fieldtype": "Data",
+      "label": "Subject",
+      "reqd": 1
+    },
+    {
+      "fieldname": "body",
+      "fieldtype": "Text Editor",
+      "label": "Email Body (HTML)",
+      "reqd": 1
+    },
+    {
+      "fieldname": "recipient_type",
+      "fieldtype": "Select",
+      "label": "Send To",
+      "options": "All Users\nAll Logistics Managers\nAll User Types",
+      "reqd": 1,
+      "default": "All Users"
+    },
+    {
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "label": "Status",
+      "options": "Draft\nScheduled\nSent\nFailed",
+      "default": "Draft",
+      "read_only": 1
+    },
+    {
+      "fieldname": "sent_at",
+      "fieldtype": "Datetime",
+      "label": "Sent At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "sent_by",
+      "fieldtype": "Link",
+      "options": "User",
+      "label": "Sent By",
+      "read_only": 1
+    },
+    {
+      "fieldname": "total_recipients",
+      "fieldtype": "Int",
+      "label": "Total Recipients",
+      "read_only": 1
+    },
+    {
+      "fieldname": "successful_sends",
+      "fieldtype": "Int",
+      "label": "Successful Sends",
+      "read_only": 1
+    },
+    {
+      "fieldname": "failed_sends",
+      "fieldtype": "Int",
+      "label": "Failed Sends",
+      "read_only": 1
+    },
+    {
+      "fieldname": "notes",
+      "fieldtype": "Text",
+      "label": "Notes"
+    }
+  ],
+  "permissions": [
+    {
+      "role": "Administrator",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1,
+      "submit": 0,
+      "amend": 0
+    }
+  ]
+}
+

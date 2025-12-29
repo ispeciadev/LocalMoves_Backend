@@ -7510,7 +7510,7 @@ def manage_payment_confirmation_template():
             "message": f"An error occurred: {str(e)}"
         }
     
-    
+
 @frappe.whitelist()
 def manage_payment_request_template():
     """
@@ -8233,10 +8233,387 @@ def manage_request_confirmation_template():
 
 
 
+# ==================== ADMIN EMAIL CAMPAIGN MANAGEMENT ====================
+# Admin can create, edit, delete, and send email campaigns to users, all users, or all logistics managers
+
+
+@frappe.whitelist()
+def admin_create_email_campaign():
+    """Create a new email campaign - Admin only
+   
+    Request Body:
+    {
+        "subject": "Email Subject",
+        "body": "HTML email body",
+        "recipient_type": "All Users|All Logistics Managers|All User Types",
+        "notes": "Campaign notes",
+        "send_now": false (optional - set to true to create and send immediately)
+    }
+   
+    recipient_type options:
+    - "All Users" - sends to all users with role = "User"
+    - "All Logistics Managers" - sends to all users with role = "Logistics Manager"
+    - "All User Types" - sends to BOTH Users and Logistics Managers
+    """
+    if not check_admin_permission():
+        return {"success": False, "message": "Access Denied: Admin permission required"}
+   
+    try:
+        data = get_request_data()
+        subject = data.get("subject")
+        body = data.get("body")
+        recipient_type = data.get("recipient_type", "All Users")
+        notes = data.get("notes", "")
+        send_now = data.get("send_now", False)
+       
+        # Validation
+        if not subject or not body:
+            return {"success": False, "message": "Subject and body are required"}
+       
+        valid_types = ["All Users", "All Logistics Managers", "All User Types"]
+        if recipient_type not in valid_types:
+            return {"success": False, "message": f"recipient_type must be one of: {', '.join(valid_types)}"}
+       
+        # Create campaign document
+        campaign = frappe.new_doc("Admin Email Campaign")
+        campaign.subject = subject
+        campaign.body = body
+        campaign.recipient_type = recipient_type
+        campaign.notes = notes
+        campaign.status = "Draft"
+        campaign.insert(ignore_permissions=True)
+        frappe.db.commit()
+       
+        # If send_now is True, send the campaign immediately
+        if send_now:
+            return admin_send_email_campaign_internal(campaign.name)
+       
+        return {
+            "success": True,
+            "message": "Email campaign created successfully",
+            "campaign_id": campaign.name,
+            "status": "Draft"
+        }
+   
+    except Exception as e:
+        frappe.log_error(f"Create Email Campaign Error: {str(e)}")
+        return {"success": False, "message": str(e)}
+
+
+
+
+@frappe.whitelist()
+def admin_update_email_campaign():
+    """Update an email campaign draft - Admin only
+   
+    Request Body:
+    {
+        "campaign_id": "CAMPAIGN-ID",
+        "subject": "New Subject",
+        "body": "New HTML body",
+        "recipient_type": "All Users|All Logistics Managers|All User Types",
+        "notes": "..."
+    }
+    """
+    if not check_admin_permission():
+        return {"success": False, "message": "Access Denied: Admin permission required"}
+   
+    try:
+        data = get_request_data()
+        campaign_id = data.get("campaign_id")
+       
+        if not campaign_id:
+            return {"success": False, "message": "campaign_id is required"}
+       
+        if not frappe.db.exists("Admin Email Campaign", campaign_id):
+            return {"success": False, "message": "Campaign not found"}
+       
+        campaign = frappe.get_doc("Admin Email Campaign", campaign_id)
+       
+        # Only allow editing drafts
+        if campaign.status != "Draft":
+            return {"success": False, "message": "Can only edit campaigns in Draft status"}
+       
+        # Update fields
+        if "subject" in data:
+            campaign.subject = data.get("subject")
+        if "body" in data:
+            campaign.body = data.get("body")
+        if "recipient_type" in data:
+            campaign.recipient_type = data.get("recipient_type")
+        if "notes" in data:
+            campaign.notes = data.get("notes")
+       
+        campaign.save(ignore_permissions=True)
+        frappe.db.commit()
+       
+        return {
+            "success": True,
+            "message": "Campaign updated successfully",
+            "campaign_id": campaign.name
+        }
+   
+    except Exception as e:
+        frappe.log_error(f"Update Email Campaign Error: {str(e)}")
+        return {"success": False, "message": str(e)}
+
+
+
+
+@frappe.whitelist()
+def admin_delete_email_campaign():
+    """Delete an email campaign - Admin only
+   
+    Request Body:
+    {
+        "campaign_id": "CAMPAIGN-ID"
+    }
+    """
+    if not check_admin_permission():
+        return {"success": False, "message": "Access Denied: Admin permission required"}
+   
+    try:
+        data = get_request_data()
+        campaign_id = data.get("campaign_id")
+       
+        if not campaign_id:
+            return {"success": False, "message": "campaign_id is required"}
+       
+        if not frappe.db.exists("Admin Email Campaign", campaign_id):
+            return {"success": False, "message": "Campaign not found"}
+       
+        frappe.delete_doc("Admin Email Campaign", campaign_id, ignore_permissions=True)
+        frappe.db.commit()
+       
+        return {
+            "success": True,
+            "message": "Campaign deleted successfully"
+        }
+   
+    except Exception as e:
+        frappe.log_error(f"Delete Email Campaign Error: {str(e)}")
+        return {"success": False, "message": str(e)}
+
+
+
+
+@frappe.whitelist()
+def admin_list_email_campaigns():
+    """Get all email campaigns - Admin only
+   
+    Returns:
+    {
+        "success": bool,
+        "campaigns": [
+            {
+                "name": "CAMPAIGN-ID",
+                "subject": "Subject",
+                "recipient_type": "All Users",
+                "status": "Draft",
+                "total_recipients": 150,
+                "successful_sends": 100,
+                "failed_sends": 50,
+                "created": "2024-12-29 10:00:00"
+            }
+        ]
+    }
+    """
+    if not check_admin_permission():
+        return {"success": False, "message": "Access Denied: Admin permission required"}
+   
+    try:
+        campaigns = frappe.get_all(
+            "Admin Email Campaign",
+            fields=["name", "subject", "recipient_type", "status", "total_recipients", "successful_sends", "failed_sends", "creation", "sent_at"],
+            order_by="creation desc"
+        )
+       
+        return {
+            "success": True,
+            "campaigns": campaigns,
+            "total_count": len(campaigns)
+        }
+   
+    except Exception as e:
+        frappe.log_error(f"List Email Campaigns Error: {str(e)}")
+        return {"success": False, "message": str(e)}
+
+
+
+
+@frappe.whitelist()
+def admin_get_email_campaign():
+    """Get a specific email campaign details - Admin only
+   
+    Request Body:
+    {
+        "campaign_id": "CAMPAIGN-ID"
+    }
+    """
+    if not check_admin_permission():
+        return {"success": False, "message": "Access Denied: Admin permission required"}
+   
+    try:
+        data = get_request_data()
+        campaign_id = data.get("campaign_id")
+       
+        if not campaign_id:
+            return {"success": False, "message": "campaign_id is required"}
+       
+        if not frappe.db.exists("Admin Email Campaign", campaign_id):
+            return {"success": False, "message": "Campaign not found"}
+       
+        campaign = frappe.get_doc("Admin Email Campaign", campaign_id)
+       
+        return {
+            "success": True,
+            "campaign": {
+                "name": campaign.name,
+                "subject": campaign.subject,
+                "body": campaign.body,
+                "recipient_type": campaign.recipient_type,
+                "status": campaign.status,
+                "total_recipients": campaign.total_recipients or 0,
+                "successful_sends": campaign.successful_sends or 0,
+                "failed_sends": campaign.failed_sends or 0,
+                "sent_at": campaign.sent_at,
+                "sent_by": campaign.sent_by,
+                "notes": campaign.notes,
+                "creation": campaign.creation
+            }
+        }
+   
+    except Exception as e:
+        frappe.log_error(f"Get Email Campaign Error: {str(e)}")
+        return {"success": False, "message": str(e)}
 
 
 
 
 
+
+
+
+def admin_send_email_campaign_internal(campaign_id):
+    """Internal function to send email campaign (used by create with send_now=true)"""
+    try:
+        if not frappe.db.exists("Admin Email Campaign", campaign_id):
+            return {"success": False, "message": "Campaign not found"}
+       
+        campaign = frappe.get_doc("Admin Email Campaign", campaign_id)
+       
+        # Check if campaign is already sent
+        if campaign.status == "Sent":
+            return {"success": False, "message": "Campaign has already been sent"}
+       
+        # Get recipients based on role type
+        recipients = []
+       
+        if campaign.recipient_type == "All Users":
+            user_docs = frappe.get_all(
+                "LocalMoves User",
+                fields=["email"],
+                filters={"role": "User", "is_active": 1}
+            )
+            recipients = [u["email"] for u in user_docs if u.get("email")]
+       
+        elif campaign.recipient_type == "All Logistics Managers":
+            manager_docs = frappe.get_all(
+                "LocalMoves User",
+                fields=["email"],
+                filters={"role": "Logistics Manager", "is_active": 1}
+            )
+            recipients = [m["email"] for m in manager_docs if m.get("email")]
+       
+        elif campaign.recipient_type == "All User Types":
+            user_docs = frappe.get_all(
+                "LocalMoves User",
+                fields=["email"],
+                filters={"role": ["in", ["User", "Logistics Manager"]], "is_active": 1}
+            )
+            recipients = [u["email"] for u in user_docs if u.get("email")]
+       
+        if not recipients:
+            return {"success": False, "message": f"No active recipients found for '{campaign.recipient_type}'"}
+       
+        # Send emails
+        successful = 0
+        failed = 0
+        failed_recipients = []
+       
+        for recipient_email in recipients:
+            try:
+                frappe.sendmail(
+                    recipients=[recipient_email],
+                    subject=campaign.subject,
+                    message=campaign.body,
+                    now=True,
+                    retry=3
+                )
+                successful += 1
+            except Exception as e:
+                failed += 1
+                failed_recipients.append({"email": recipient_email, "error": str(e)})
+                frappe.log_error(f"Failed to send campaign email to {recipient_email}: {str(e)}")
+       
+        # Update campaign
+        campaign.status = "Sent"
+        campaign.total_recipients = len(recipients)
+        campaign.successful_sends = successful
+        campaign.failed_sends = failed
+        campaign.sent_at = frappe.utils.now()
+        campaign.sent_by = frappe.session.user
+        campaign.save(ignore_permissions=True)
+        frappe.db.commit()
+       
+        return {
+            "success": True,
+            "message": f"Campaign sent! Successful: {successful}, Failed: {failed}",
+            "campaign_id": campaign.name,
+            "stats": {
+                "total_recipients": len(recipients),
+                "successful_sends": successful,
+                "failed_sends": failed,
+                "failed_recipients": failed_recipients if failed_recipients else []
+            }
+        }
+   
+    except Exception as e:
+        frappe.log_error(f"Send Email Campaign Error: {str(e)}")
+        return {"success": False, "message": str(e)}
+
+
+
+
+@frappe.whitelist()
+def admin_send_email_campaign():
+    """Send an email campaign to users by role - Admin only
+   
+    Request Body:
+    {
+        "campaign_id": "CAMPAIGN-ID"
+    }
+   
+    Sends to:
+    - All Users (role = "User") if recipient_type is "All Users"
+    - All Logistics Managers (role = "Logistics Manager") if recipient_type is "All Logistics Managers"
+    - BOTH Users AND Logistics Managers if recipient_type is "All User Types"
+    """
+    if not check_admin_permission():
+        return {"success": False, "message": "Access Denied: Admin permission required"}
+   
+    try:
+        data = get_request_data()
+        campaign_id = data.get("campaign_id")
+       
+        if not campaign_id:
+            return {"success": False, "message": "campaign_id is required"}
+       
+        # Call the internal send function
+        return admin_send_email_campaign_internal(campaign_id)
+   
+    except Exception as e:
+        frappe.log_error(f"Send Email Campaign Error: {str(e)}")
+        return {"success": False, "message": str(e)}
 
 
