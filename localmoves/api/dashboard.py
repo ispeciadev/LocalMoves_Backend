@@ -7209,175 +7209,308 @@ def manage_property_search_template():
 #     except Exception as e:
 #         frappe.log_error(f"Payment Confirmation Template Error: {str(e)}")
 #         return {"success": False, "message": str(e)}
-
-@frappe.whitelist()
+@frappe.whitelist(allow_guest=True)
 def manage_payment_confirmation_template():
     """
     Manage Payment Confirmation Email Template
-    Used in: request_payment.py - send_payment_confirmation_email()
+    Used when payment is received for a logistics request
+    
+    Actions:
+    - get: Retrieve current template (custom or default)
+    - update: Update template with new content
+    - reset: Reset to default template
+    - preview: Preview template with sample data
+    
+    Request format:
+    {
+        "action": "get|update|reset|preview",
+        "email_subject": "...",  // for update action
+        "email_body": "...",     // for update action
+    }
     """
+    
     try:
-        check_admin_permission()
-       
-        data = get_request_data()
-        action = data.get("action", "get")
-       
-        TEMPLATE_NAME = "payment_confirmation"
-        TEMPLATE_INFO = {
-            "name": "payment_confirmation",
-            "title": "Payment Confirmation",
-            "file": "request_payment.py",
-            "default_subject": "✅ Payment Confirmed - {request_id}",
-            "default_body": """
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-                <h2 style="color: #2c3e50; border-bottom: 2px solid #28a745; padding-bottom: 10px;">
-                    ✅ Payment Confirmed
-                </h2>
-               
-                <div style="background-color: #d4edda; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #28a745;">
-                    <p style="margin: 0; color: #155724;"><strong>Success!</strong> Your payment has been verified and your move is confirmed.</p>
-                </div>
-               
-                <h3 style="color: #2c3e50;">Payment Details</h3>
-                <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-                    <tr style="background-color: #f8f9fa;">
-                        <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Total Amount:</strong></td>
-                        <td style="padding: 10px; border: 1px solid #dee2e6;">£{total_amount}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Deposit Paid:</strong></td>
-                        <td style="padding: 10px; border: 1px solid #dee2e6;">£{deposit_amount} ✓</td>
-                    </tr>
-                    <tr style="background-color: #f8f9fa;">
-                        <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Remaining Balance:</strong></td>
-                        <td style="padding: 10px; border: 1px solid #dee2e6;">£{remaining_amount}</td>
-                    </tr>
-                </table>
-               
-                <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                    <p style="margin: 0; color: #856404;">
-                        <strong>💰 Remaining Payment:</strong> The balance will be collected upon move completion.
-                    </p>
-                </div>
-               
-                <p style="color: #666; font-size: 12px; text-align: center; margin-top: 30px;">
-                    Thank you for choosing LocalMoves!<br/>For support, contact us at support@localmoves.com
-                </p>
-            </div>
-            """,
-            "variables": ["user_name", "request_id", "total_amount", "deposit_amount", "remaining_amount", "company_name"]
-        }
-       
-        if action == "get":
-            result = frappe.db.sql("""
-                SELECT email_subject, email_body, modified
-                FROM `tabEmail Template Config`
-                WHERE template_name = %s
-                LIMIT 1
-            """, TEMPLATE_NAME, as_dict=True)
-            if result:
-                return {
-                    "success": True,
-                    "template": TEMPLATE_INFO,
-                    "email_subject": result[0]['email_subject'],
-                    "email_body": result[0]['email_body'],
-                    "is_custom": True,
-                    "last_updated": result[0]['modified']
-                }
+        # Get data from request - handles both form data and JSON
+        if frappe.request.method == "POST":
+            if frappe.request.is_json:
+                # JSON request from Postman
+                data = frappe.request.get_json()
             else:
-                return {
-                    "success": True,
-                    "template": TEMPLATE_INFO,
-                    "email_subject": TEMPLATE_INFO["default_subject"],
-                    "email_body": TEMPLATE_INFO["default_body"],
-                    "is_custom": False
-                }
-       
-        elif action == "update":
-            email_subject = data.get("email_subject")
-            email_body = data.get("email_body")
-           
-            if not email_subject or not email_body:
-                return {"success": False, "message": "email_subject and email_body are required"}
-           
-            try:
-                existing = frappe.db.sql("""
-                    SELECT name FROM `tabEmail Template Config`
-                    WHERE template_name = %s
-                    LIMIT 1
-                """, TEMPLATE_NAME, as_dict=True)
-               
-                if existing:
-                    frappe.db.sql("""
-                        UPDATE `tabEmail Template Config`
-                        SET email_subject = %s, email_body = %s, modified = NOW()
-                        WHERE name = %s
-                    """, (email_subject, email_body, existing[0]['name']))
-                else:
-                    frappe.db.sql("""
-                        INSERT INTO `tabEmail Template Config`
-                        (name, template_name, email_subject, email_body, modified, creation, owner, modified_by)
-                        VALUES (%s, %s, %s, %s, NOW(), NOW(), %s, %s)
-                    """, (TEMPLATE_NAME, TEMPLATE_NAME, email_subject, email_body, frappe.session.user, frappe.session.user))
-               
-                frappe.db.commit()
-               
-                return {
-                    "success": True,
-                    "message": "Payment confirmation email template updated",
-                    "updated_at": frappe.utils.now()
-                }
-            except Exception as save_error:
-                frappe.db.rollback()
-                return {"success": False, "message": f"Save error: {str(save_error)}"}
-       
-        elif action == "reset":
-            frappe.db.sql("DELETE FROM `tabEmail Template Config` WHERE template_name = %s", TEMPLATE_NAME)
-            frappe.db.commit()
-            return {
-                "success": True,
-                "message": "Payment confirmation email template reset to default"
-            }
-       
-        elif action == "preview":
-            sample_variables = data.get("sample_variables", {})
-           
+                # Form data request
+                data = frappe.form_dict
+        else:
+            # GET request
+            data = frappe.form_dict
+        
+        # Extract parameters
+        action = data.get("action", "get")
+        email_subject = data.get("email_subject")
+        email_body = data.get("email_body")
+        
+        # Log what we received
+        frappe.log_error(
+            f"Payment Template - Action: {action}, Subject: {email_subject[:50] if email_subject else None}, Body length: {len(email_body) if email_body else 0}", 
+            "Payment Template Debug"
+        )
+        
+        TEMPLATE_NAME = "payment_confirmation"
+        
+        DEFAULT_SUBJECT = "✅ Payment Confirmed - {request_id}"
+        
+        DEFAULT_BODY = """<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+    <h2 style="color: #2c3e50; border-bottom: 2px solid #28a745; padding-bottom: 10px;">
+        ✅ Payment Confirmed
+    </h2>
+    
+    <p>Dear <strong>{user_name}</strong>,</p>
+    
+    <div style="background-color: #d4edda; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #28a745;">
+        <p style="margin: 0; color: #155724;"><strong>Success!</strong> Your payment has been verified and your move is confirmed.</p>
+    </div>
+    
+    <h3 style="color: #2c3e50;">Payment Details</h3>
+    <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+        <tr style="background-color: #f8f9fa;">
+            <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Request ID:</strong></td>
+            <td style="padding: 10px; border: 1px solid #dee2e6;">{request_id}</td>
+        </tr>
+        <tr>
+            <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Amount Paid:</strong></td>
+            <td style="padding: 10px; border: 1px solid #dee2e6;">£{amount}</td>
+        </tr>
+        <tr style="background-color: #f8f9fa;">
+            <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Transaction ID:</strong></td>
+            <td style="padding: 10px; border: 1px solid #dee2e6;">{transaction_id}</td>
+        </tr>
+        <tr>
+            <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Payment Date:</strong></td>
+            <td style="padding: 10px; border: 1px solid #dee2e6;">{payment_date}</td>
+        </tr>
+        <tr style="background-color: #f8f9fa;">
+            <td style="padding: 10px; border: 1px solid #dee2e6;"><strong>Company:</strong></td>
+            <td style="padding: 10px; border: 1px solid #dee2e6;">{company_name}</td>
+        </tr>
+    </table>
+    
+    <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0;">
+        <h3 style="color: #2c3e50; margin-top: 0;">💰 Payment Breakdown</h3>
+        <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+                <td style="padding: 8px;"><strong>Total Amount:</strong></td>
+                <td style="padding: 8px; text-align: right;">£{amount}</td>
+            </tr>
+            <tr style="background-color: white;">
+                <td style="padding: 8px;"><strong>Deposit Paid:</strong></td>
+                <td style="padding: 8px; text-align: right; color: #28a745;">£{deposit_amount} ✓</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px;"><strong>Remaining Balance:</strong></td>
+                <td style="padding: 8px; text-align: right;">£{remaining_amount}</td>
+            </tr>
+        </table>
+    </div>
+    
+    <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
+        <p style="margin: 0; color: #856404;">
+            <strong>📋 Important:</strong> The remaining balance of £{remaining_amount} will be collected upon completion of your move.
+        </p>
+    </div>
+    
+    <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+        <p style="color: #666; font-size: 12px;">
+            Thank you for choosing LocalMoves!<br/>
+            For support, contact us at support@localmoves.com
+        </p>
+    </div>
+</div>"""
+        
+        if action == "get":
+            # Get current template from database
             template = frappe.db.sql("""
                 SELECT email_subject, email_body
                 FROM `tabEmail Template Config`
                 WHERE template_name = %s
                 LIMIT 1
             """, TEMPLATE_NAME, as_dict=True)
-           
+            
+            if template:
+                return {
+                    "success": True,
+                    "template_name": TEMPLATE_NAME,
+                    "email_subject": template[0]['email_subject'],
+                    "email_body": template[0]['email_body'],
+                    "is_custom": True
+                }
+            else:
+                return {
+                    "success": True,
+                    "template_name": TEMPLATE_NAME,
+                    "email_subject": DEFAULT_SUBJECT,
+                    "email_body": DEFAULT_BODY,
+                    "is_custom": False,
+                    "message": "Using default template. Click 'Update' to create a custom template."
+                }
+        
+        elif action == "update":
+            if not email_subject or not email_body:
+                frappe.log_error("Missing subject or body", "Payment Template Update Error")
+                return {
+                    "success": False, 
+                    "message": "Subject and body are required"
+                }
+            
+            try:
+                # Check if template exists
+                existing = frappe.db.sql("""
+                    SELECT name FROM `tabEmail Template Config`
+                    WHERE template_name = %s
+                    LIMIT 1
+                """, TEMPLATE_NAME, as_dict=True)
+                
+                frappe.log_error(f"Payment template exists: {bool(existing)}", "Payment Template Update")
+                
+                if existing:
+                    # Update existing template
+                    frappe.log_error(f"Updating payment template: {existing[0]['name']}", "Payment Template Update")
+                    frappe.db.sql("""
+                        UPDATE `tabEmail Template Config`
+                        SET email_subject = %s, 
+                            email_body = %s, 
+                            modified = %s,
+                            modified_by = %s
+                        WHERE template_name = %s
+                    """, (
+                        email_subject, 
+                        email_body, 
+                        frappe.utils.now(), 
+                        frappe.session.user,
+                        TEMPLATE_NAME
+                    ))
+                else:
+                    # Create new template
+                    frappe.log_error("Creating new payment template", "Payment Template Update")
+                    new_name = frappe.generate_hash(length=10)
+                    frappe.db.sql("""
+                        INSERT INTO `tabEmail Template Config`
+                        (name, template_name, email_subject, email_body, creation, modified, modified_by, owner, docstatus, idx)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, 0)
+                    """, (
+                        new_name,
+                        TEMPLATE_NAME, 
+                        email_subject, 
+                        email_body, 
+                        frappe.utils.now(), 
+                        frappe.utils.now(),
+                        frappe.session.user,
+                        frappe.session.user
+                    ))
+                
+                frappe.db.commit()
+                
+                # Verify the update
+                updated = frappe.db.sql("""
+                    SELECT email_subject, email_body
+                    FROM `tabEmail Template Config`
+                    WHERE template_name = %s
+                    LIMIT 1
+                """, TEMPLATE_NAME, as_dict=True)
+                
+                frappe.log_error(
+                    f"Payment template verification - Subject matches: {updated[0]['email_subject'] == email_subject}, Body length: {len(updated[0]['email_body'])}", 
+                    "Payment Template Update Success"
+                )
+                
+                return {
+                    "success": True,
+                    "message": "Payment confirmation template updated successfully",
+                    "template_name": TEMPLATE_NAME,
+                    "email_subject": updated[0]['email_subject'],
+                    "email_body": updated[0]['email_body'],
+                    "is_custom": True
+                }
+                
+            except Exception as e:
+                frappe.log_error(f"Payment template update failed: {str(e)}\n{frappe.get_traceback()}", "Payment Template Update Error")
+                frappe.db.rollback()
+                return {
+                    "success": False, 
+                    "message": f"Update failed: {str(e)}"
+                }
+        
+        elif action == "reset":
+            # Delete custom template to revert to defaults
+            frappe.db.sql("""
+                DELETE FROM `tabEmail Template Config`
+                WHERE template_name = %s
+            """, TEMPLATE_NAME)
+            
+            frappe.db.commit()
+            
+            return {
+                "success": True,
+                "message": "Payment confirmation template reset to default",
+                "template_name": TEMPLATE_NAME,
+                "email_subject": DEFAULT_SUBJECT,
+                "email_body": DEFAULT_BODY,
+                "is_custom": False
+            }
+        
+        elif action == "preview":
+            # Get current template
+            template = frappe.db.sql("""
+                SELECT email_subject, email_body
+                FROM `tabEmail Template Config`
+                WHERE template_name = %s
+                LIMIT 1
+            """, TEMPLATE_NAME, as_dict=True)
+            
             if template:
                 template_html = template[0]['email_body']
                 template_subject = template[0]['email_subject']
             else:
-                template_html = TEMPLATE_INFO["default_body"]
-                template_subject = TEMPLATE_INFO["default_subject"]
-           
+                template_html = DEFAULT_BODY
+                template_subject = DEFAULT_SUBJECT
+            
+            # Sample variables for preview
+            sample_variables = {
+                "user_name": "John Doe",
+                "request_id": "REQ-2024-001",
+                "amount": "500.00",
+                "transaction_id": "TXN-2024-12345",
+                "payment_date": "December 29, 2024",
+                "company_name": "ABC Movers Ltd",
+                "deposit_amount": "50.00",
+                "remaining_amount": "450.00"
+            }
+            
             preview_html = template_html
             preview_subject = template_subject
-           
+            
             for var_name, var_value in sample_variables.items():
                 placeholder = "{" + var_name + "}"
                 preview_html = preview_html.replace(placeholder, str(var_value))
                 preview_subject = preview_subject.replace(placeholder, str(var_value))
-           
+            
             return {
                 "success": True,
                 "preview_subject": preview_subject,
                 "preview_html": preview_html
             }
-       
+        
         else:
-            return {"success": False, "message": f"Invalid action: {action}"}
-           
+            return {
+                "success": False, 
+                "message": f"Invalid action: {action}. Valid actions are: get, update, reset, preview"
+            }
+            
     except Exception as e:
-        frappe.log_error(f"Payment Confirmation Template Error: {str(e)}")
-        return {"success": False, "message": str(e)}
-
-
+        frappe.log_error(f"Payment Confirmation Template Error: {str(e)}\n{frappe.get_traceback()}", "Payment Template API Error")
+        return {
+            "success": False, 
+            "message": f"An error occurred: {str(e)}"
+        }
+    
+    
 @frappe.whitelist()
 def manage_payment_request_template():
     """
@@ -7792,9 +7925,6 @@ def manage_payment_request_template():
 #         return {"success": False, "message": str(e)}
 
 
-import frappe
-import json
-
 @frappe.whitelist(allow_guest=True)
 def manage_request_confirmation_template():
     """Manage request confirmation email template
@@ -8100,8 +8230,6 @@ def manage_request_confirmation_template():
             "success": False, 
             "message": f"An error occurred: {str(e)}"
         }
-
-
 
 
 

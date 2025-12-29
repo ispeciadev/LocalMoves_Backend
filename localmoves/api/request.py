@@ -1955,16 +1955,16 @@ def create_request():
         return {"success": False, "message": f"Failed to create request: {str(e)}"}
 
 
-def send_request_confirmation_email(user_email, user_name, request_id, 
+def send_request_confirmation_email(user_email, user_name, request_id,
                                     pickup_address, pickup_city, pickup_pincode,
                                     delivery_address, delivery_city, delivery_pincode,
                                     item_description, delivery_date, company_name, status,
                                     property_size=None, service_type="Standard"):
     """Send confirmation email with embedded route map using OpenStreetMap (FREE)"""
-    
+
     # FREE OpenStreetMap route link - No API key needed!
     osm_map_url = f"https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route={pickup_pincode}%2CIndia;{delivery_pincode}%2CIndia"
-    
+
     # Format property size if it exists
     property_size_html = ""
     if property_size:
@@ -1973,99 +1973,135 @@ def send_request_confirmation_email(user_email, user_name, request_id,
         else:
             property_size_display = str(property_size)
         property_size_html = f'<tr><td style="padding: 8px; font-weight: bold;">Property Size:</td><td style="padding: 8px;">{property_size_display}</td></tr>'
+
+    # ===== GET TEMPLATE FROM DATABASE =====
+    template = frappe.db.sql("""
+        SELECT email_subject, email_body
+        FROM `tabEmail Template Config`
+        WHERE template_name = 'request_confirmation'
+        LIMIT 1
+    """, as_dict=True)
     
-    # Email HTML content
-    email_content = f"""
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-        <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
-            🚚 Logistics Request Confirmation
-        </h2>
-        
-        <p>Dear <strong>{user_name}</strong>,</p>
-        
-        <p>Your logistics request has been created successfully!</p>
-        
-        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="color: #2c3e50; margin-top: 0;">Request Details</h3>
-            <table style="width: 100%; border-collapse: collapse;">
-                <tr>
-                    <td style="padding: 8px; font-weight: bold; width: 40%;">Request ID:</td>
-                    <td style="padding: 8px;">{request_id}</td>
-                </tr>
-                <tr style="background-color: white;">
-                    <td style="padding: 8px; font-weight: bold;">Status:</td>
-                    <td style="padding: 8px;"><span style="background-color: {'#28a745' if status == 'Assigned' else '#ffc107'}; color: white; padding: 3px 10px; border-radius: 3px; font-size: 12px;">{status}</span></td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px; font-weight: bold;">Item Description:</td>
-                    <td style="padding: 8px;">{item_description}</td>
-                </tr>
-                <tr style="background-color: white;">
-                    <td style="padding: 8px; font-weight: bold;">Service Type:</td>
-                    <td style="padding: 8px;">{service_type}</td>
-                </tr>
-                {property_size_html}
-                {f'<tr style="background-color: white;"><td style="padding: 8px; font-weight: bold;">Assigned Company:</td><td style="padding: 8px;">{company_name}</td></tr>' if company_name else ''}
-                {f'<tr><td style="padding: 8px; font-weight: bold;">Expected Delivery:</td><td style="padding: 8px;">{delivery_date}</td></tr>' if delivery_date else ''}
-            </table>
-        </div>
-        
-        <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="color: #2c3e50; margin-top: 0;">📍 Pickup Location</h3>
-            <p style="margin: 5px 0;"><strong>{pickup_address}</strong></p>
-            <p style="margin: 5px 0; color: #666;">{pickup_city}, PIN: {pickup_pincode}</p>
-        </div>
-        
-        <div style="background-color: #ffebee; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="color: #2c3e50; margin-top: 0;">🎯 Delivery Location</h3>
-            <p style="margin: 5px 0;"><strong>{delivery_address}</strong></p>
-            <p style="margin: 5px 0; color: #666;">{delivery_city}, PIN: {delivery_pincode}</p>
-        </div>
-        
-        <div style="text-align: center; margin: 30px 0;">
-            <h3 style="color: #2c3e50;">Route Map</h3>
-            <a href="{osm_map_url}" target="_blank" style="display: inline-block; text-decoration: none;">
-                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 60px 20px; border-radius: 8px; color: white; font-size: 18px; margin: 10px 0;">
-                    🗺️ Click to View Route Map<br/>
-                    <span style="font-size: 14px; opacity: 0.9;">From {pickup_city} to {delivery_city}</span>
-                </div>
-            </a>
-            <p style="font-size: 12px; color: #666; margin-top: 10px;">
-                Click the map above to view detailed route in your browser
-            </p>
-        </div>
-        
-        <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
-            <p style="margin: 0; color: #856404;">
-                <strong>📱 Track Your Request:</strong> You can track your request status anytime by logging into your account.
-            </p>
-        </div>
-        
-        <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
-            <p style="color: #666; font-size: 12px;">
-                This is an automated email. Please do not reply to this message.<br/>
-                For support, contact us at support@localmoves.com
-            </p>
-        </div>
+    if template:
+        # Use custom template from database
+        email_subject = template[0]['email_subject']
+        email_content = template[0]['email_body']
+    else:
+        # Fallback to default template
+        email_subject = "🚚 Logistics Request Confirmation - {request_id}"
+        email_content = """<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+    <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
+        🚚 Logistics Request Confirmation
+    </h2>
+
+    <p>Dear <strong>{user_name}</strong>,</p>
+
+    <p>Your logistics request has been created successfully!</p>
+
+    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+        <h3 style="color: #2c3e50; margin-top: 0;">Request Details</h3>
+        <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+                <td style="padding: 8px; font-weight: bold; width: 40%;">Request ID:</td>
+                <td style="padding: 8px;">{request_id}</td>
+            </tr>
+            <tr style="background-color: white;">
+                <td style="padding: 8px; font-weight: bold;">Status:</td>
+                <td style="padding: 8px;"><span style="background-color: #28a745; color: white; padding: 3px 10px; border-radius: 3px; font-size: 12px;">{status}</span></td>
+            </tr>
+            <tr>
+                <td style="padding: 8px; font-weight: bold;">Item Description:</td>
+                <td style="padding: 8px;">{item_description}</td>
+            </tr>
+            <tr style="background-color: white;">
+                <td style="padding: 8px; font-weight: bold;">Service Type:</td>
+                <td style="padding: 8px;">{service_type}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px; font-weight: bold;">Assigned Company:</td>
+                <td style="padding: 8px;">{company_name}</td>
+            </tr>
+            <tr style="background-color: white;">
+                <td style="padding: 8px; font-weight: bold;">Expected Delivery:</td>
+                <td style="padding: 8px;">{delivery_date}</td>
+            </tr>
+        </table>
     </div>
-    """
+
+    <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0;">
+        <h3 style="color: #2c3e50; margin-top: 0;">📍 Pickup Location</h3>
+        <p style="margin: 5px 0;"><strong>{pickup_address}</strong></p>
+        <p style="margin: 5px 0; color: #666;">{pickup_city}, PIN: {pickup_pincode}</p>
+    </div>
+
+    <div style="background-color: #ffebee; padding: 15px; border-radius: 5px; margin: 20px 0;">
+        <h3 style="color: #2c3e50; margin-top: 0;">🎯 Delivery Location</h3>
+        <p style="margin: 5px 0;"><strong>{delivery_address}</strong></p>
+        <p style="margin: 5px 0; color: #666;">{delivery_city}, PIN: {delivery_pincode}</p>
+    </div>
+
+    <div style="text-align: center; margin: 30px 0;">
+        <h3 style="color: #2c3e50;">Route Map</h3>
+        <a href="{route_map_url}" target="_blank" style="display: inline-block; text-decoration: none;">
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 60px 20px; border-radius: 8px; color: white; font-size: 18px; margin: 10px 0;">
+                🗺️ Click to View Route Map<br/>
+                <span style="font-size: 14px; opacity: 0.9;">From {pickup_city} to {delivery_city}</span>
+            </div>
+        </a>
+    </div>
+
+    <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
+        <p style="margin: 0; color: #856404;">
+            <strong>📱 Track Your Request:</strong> You can track your request status anytime by logging into your account.
+        </p>
+    </div>
+
+    <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+        <p style="color: #666; font-size: 12px;">
+            This is an automated email. Please do not reply to this message.<br/>
+            For support, contact us at support@localmoves.com
+        </p>
+    </div>
+</div>"""
     
+    # ===== REPLACE TEMPLATE VARIABLES =====
+    variables = {
+        "user_name": user_name,
+        "request_id": request_id,
+        "status": status,
+        "item_description": item_description,
+        "service_type": service_type,
+        "company_name": company_name if company_name else "Not yet assigned",
+        "delivery_date": delivery_date if delivery_date else "TBD",
+        "pickup_address": pickup_address,
+        "pickup_city": pickup_city,
+        "pickup_pincode": pickup_pincode,
+        "delivery_address": delivery_address,
+        "delivery_city": delivery_city,
+        "delivery_pincode": delivery_pincode,
+        "route_map_url": osm_map_url
+    }
+    
+    # Replace all variables in subject and body
+    for var_name, var_value in variables.items():
+        placeholder = "{" + var_name + "}"
+        email_subject = email_subject.replace(placeholder, str(var_value))
+        email_content = email_content.replace(placeholder, str(var_value))
+
     # Send email using Frappe's email system
     try:
         # Send email immediately
         frappe.sendmail(
             recipients=[user_email],
-            sender="megha250903@gmail.com",  # Your configured email
-            subject=f"Logistics Request Confirmation - {request_id}",
+            sender="megha250903@gmail.com",
+            subject=email_subject,
             message=email_content,
-            delayed=False,
             now=True
         )
-        frappe.logger().info(f"Email sent successfully to {user_email}")
+        frappe.logger().info(f"Request confirmation email sent to {user_email} for request {request_id}")
     except Exception as e:
-        frappe.log_error(f"Failed to send email to {user_email}: {str(e)}", "Email Send Error")
-        pass
-
+        frappe.log_error(f"Failed to send request confirmation email: {str(e)}", "Email Send Error")
+        frappe.logger().error(f"Email send failed: {str(e)}")
 
 # TEST API ENDPOINTS
 
