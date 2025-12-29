@@ -7538,8 +7538,265 @@ def manage_payment_request_template():
 
 
 
-@frappe.whitelist()
-def manage_request_confirmation_template(action="get", email_subject=None, email_body=None):
+# @frappe.whitelist()
+# def manage_request_confirmation_template(action="get", email_subject=None, email_body=None):
+#     """Manage request confirmation email template
+   
+#     Actions:
+#     - get: Retrieve current template (custom or default)
+#     - update: Update template with new content
+#     - reset: Reset to default template
+#     - preview: Preview template with sample data
+#     """
+   
+#     try:
+#         TEMPLATE_NAME = "request_confirmation"
+       
+#         DEFAULT_SUBJECT = "🚚 Logistics Request Confirmation - {request_id}"
+       
+#         DEFAULT_BODY = """<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+#     <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
+#         🚚 Logistics Request Confirmation
+#     </h2>
+   
+#     <p>Dear <strong>{user_name}</strong>,</p>
+   
+#     <p>Your logistics request has been created successfully!</p>
+   
+#     <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+#         <h3 style="color: #2c3e50; margin-top: 0;">Request Details</h3>
+#         <table style="width: 100%; border-collapse: collapse;">
+#             <tr>
+#                 <td style="padding: 8px; font-weight: bold; width: 40%;">Request ID:</td>
+#                 <td style="padding: 8px;">{request_id}</td>
+#             </tr>
+#             <tr style="background-color: white;">
+#                 <td style="padding: 8px; font-weight: bold;">Status:</td>
+#                 <td style="padding: 8px;"><span style="background-color: #28a745; color: white; padding: 3px 10px; border-radius: 3px; font-size: 12px;">{status}</span></td>
+#             </tr>
+#             <tr>
+#                 <td style="padding: 8px; font-weight: bold;">Item Description:</td>
+#                 <td style="padding: 8px;">{item_description}</td>
+#             </tr>
+#             <tr style="background-color: white;">
+#                 <td style="padding: 8px; font-weight: bold;">Service Type:</td>
+#                 <td style="padding: 8px;">{service_type}</td>
+#             </tr>
+#             <tr>
+#                 <td style="padding: 8px; font-weight: bold;">Assigned Company:</td>
+#                 <td style="padding: 8px;">{company_name}</td>
+#             </tr>
+#             <tr style="background-color: white;">
+#                 <td style="padding: 8px; font-weight: bold;">Expected Delivery:</td>
+#                 <td style="padding: 8px;">{delivery_date}</td>
+#             </tr>
+#         </table>
+#     </div>
+   
+#     <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0;">
+#         <h3 style="color: #2c3e50; margin-top: 0;">📍 Pickup Location</h3>
+#         <p style="margin: 5px 0;"><strong>{pickup_address}</strong></p>
+#         <p style="margin: 5px 0; color: #666;">{pickup_city}, PIN: {pickup_pincode}</p>
+#     </div>
+   
+#     <div style="background-color: #ffebee; padding: 15px; border-radius: 5px; margin: 20px 0;">
+#         <h3 style="color: #2c3e50; margin-top: 0;">🎯 Delivery Location</h3>
+#         <p style="margin: 5px 0;"><strong>{delivery_address}</strong></p>
+#         <p style="margin: 5px 0; color: #666;">{delivery_city}, PIN: {delivery_pincode}</p>
+#     </div>
+   
+#     <div style="text-align: center; margin: 30px 0;">
+#         <h3 style="color: #2c3e50;">Route Map</h3>
+#         <a href="{route_map_url}" target="_blank" style="display: inline-block; text-decoration: none;">
+#             <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 60px 20px; border-radius: 8px; color: white; font-size: 18px; margin: 10px 0;">
+#                 🗺️ Click to View Route Map<br/>
+#                 <span style="font-size: 14px; opacity: 0.9;">From {pickup_city} to {delivery_city}</span>
+#             </div>
+#         </a>
+#     </div>
+   
+#     <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
+#         <p style="margin: 0; color: #856404;">
+#             <strong>📱 Track Your Request:</strong> You can track your request status anytime by logging into your account.
+#         </p>
+#     </div>
+   
+#     <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+#         <p style="color: #666; font-size: 12px;">
+#             This is an automated email. Please do not reply to this message.<br/>
+#             For support, contact us at support@localmoves.com
+#         </p>
+#     </div>
+# </div>"""
+       
+#         if action == "get":
+#             # Get current template from database
+#             template = frappe.db.sql("""
+#                 SELECT email_subject, email_body
+#                 FROM `tabEmail Template Config`
+#                 WHERE template_name = %s
+#                 LIMIT 1
+#             """, TEMPLATE_NAME, as_dict=True)
+           
+#             if template:
+#                 return {
+#                     "success": True,
+#                     "template_name": TEMPLATE_NAME,
+#                     "email_subject": template[0]['email_subject'],
+#                     "email_body": template[0]['email_body'],
+#                     "is_custom": True
+#                 }
+#             else:
+#                 return {
+#                     "success": True,
+#                     "template_name": TEMPLATE_NAME,
+#                     "email_subject": DEFAULT_SUBJECT,
+#                     "email_body": DEFAULT_BODY,
+#                     "is_custom": False,
+#                     "message": "Using default template. Click 'Update' to create a custom template."
+#                 }
+       
+#         elif action == "update":
+#             # Add logging to see what we receive
+#             frappe.log_error(f"UPDATE called with subject: {email_subject[:50] if email_subject else 'None'}", "Template Update Debug")
+#             frappe.log_error(f"Body length: {len(email_body) if email_body else 0}", "Template Update Debug")
+            
+#             if not email_subject or not email_body:
+#                 frappe.log_error("Missing subject or body!", "Template Update Error")
+#                 return {"success": False, "message": "Subject and body are required"}
+            
+#             try:
+#                 # Check if template exists
+#                 template = frappe.db.sql("""
+#                     SELECT name FROM `tabEmail Template Config`
+#                     WHERE template_name = %s
+#                     LIMIT 1
+#                 """, TEMPLATE_NAME, as_dict=True)
+                
+#                 frappe.log_error(f"Template exists: {bool(template)}", "Template Update Debug")
+                
+#                 if template:
+#                     # Update existing template
+#                     frappe.log_error(f"Updating template: {template[0]['name']}", "Template Update Debug")
+#                     result = frappe.db.sql("""
+#                         UPDATE `tabEmail Template Config`
+#                         SET email_subject = %s, email_body = %s, modified = %s
+#                         WHERE template_name = %s
+#                     """, (email_subject, email_body, frappe.utils.now(), TEMPLATE_NAME))
+                    
+#                     frappe.log_error(f"Update result: {result}", "Template Update Debug")
+#                 else:
+#                     # Create new template with all required fields
+#                     frappe.log_error("Creating new template", "Template Update Debug")
+#                     frappe.db.sql("""
+#                         INSERT INTO `tabEmail Template Config`
+#                         (name, template_name, email_subject, email_body, creation, modified, modified_by, owner, docstatus, idx)
+#                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, 0)
+#                     """, (
+#                         TEMPLATE_NAME, 
+#                         TEMPLATE_NAME, 
+#                         email_subject, 
+#                         email_body, 
+#                         frappe.utils.now(), 
+#                         frappe.utils.now(),
+#                         frappe.session.user,
+#                         frappe.session.user
+#                     ))
+                
+#                 frappe.db.commit()
+#                 frappe.log_error("Commit successful!", "Template Update Debug")
+                
+#                 return {
+#                     "success": True,
+#                     "message": "Request confirmation template updated successfully",
+#                     "template_name": TEMPLATE_NAME,
+#                     "email_subject": email_subject,
+#                     "email_body": email_body
+#                 }
+                
+#             except Exception as e:
+#                 frappe.log_error(f"Update exception: {str(e)}", "Template Update Error")
+#                 frappe.db.rollback()
+#                 return {"success": False, "message": str(e)}
+            
+#         elif action == "reset":
+#             # Delete custom template to revert to defaults
+#             frappe.db.sql("""
+#                 DELETE FROM `tabEmail Template Config`
+#                 WHERE template_name = %s
+#             """, TEMPLATE_NAME)
+           
+#             frappe.db.commit()
+           
+#             return {
+#                 "success": True,
+#                 "message": "Template reset to default",
+#                 "template_name": TEMPLATE_NAME,
+#                 "email_subject": DEFAULT_SUBJECT,
+#                 "email_body": DEFAULT_BODY
+#             }
+       
+#         elif action == "preview":
+#             # Get current template
+#             template = frappe.db.sql("""
+#                 SELECT email_subject, email_body
+#                 FROM `tabEmail Template Config`
+#                 WHERE template_name = %s
+#                 LIMIT 1
+#             """, TEMPLATE_NAME, as_dict=True)
+           
+#             if template:
+#                 template_html = template[0]['email_body']
+#                 template_subject = template[0]['email_subject']
+#             else:
+#                 template_html = DEFAULT_BODY
+#                 template_subject = DEFAULT_SUBJECT
+           
+#             # Sample variables for preview
+#             sample_variables = {
+#                 "user_name": "John Doe",
+#                 "request_id": "REQ-2024-001",
+#                 "status": "Pending",
+#                 "item_description": "3 BHK House Furniture",
+#                 "service_type": "Full Service",
+#                 "company_name": "Local Movers Co.",
+#                 "delivery_date": "2024-12-20",
+#                 "pickup_address": "123 Main St",
+#                 "pickup_city": "Mumbai",
+#                 "pickup_pincode": "400001",
+#                 "delivery_address": "456 Park Ave",
+#                 "delivery_city": "Bangalore",
+#                 "delivery_pincode": "560001",
+#                 "route_map_url": "https://www.openstreetmap.org/directions"
+#             }
+           
+#             preview_html = template_html
+#             preview_subject = template_subject
+           
+#             for var_name, var_value in sample_variables.items():
+#                 placeholder = "{" + var_name + "}"
+#                 preview_html = preview_html.replace(placeholder, str(var_value))
+#                 preview_subject = preview_subject.replace(placeholder, str(var_value))
+           
+#             return {
+#                 "success": True,
+#                 "preview_subject": preview_subject,
+#                 "preview_html": preview_html
+#             }
+       
+#         else:
+#             return {"success": False, "message": f"Invalid action: {action}"}
+           
+#     except Exception as e:
+#         frappe.log_error(f"Request Confirmation Template Error: {str(e)}")
+#         return {"success": False, "message": str(e)}
+
+
+import frappe
+import json
+
+@frappe.whitelist(allow_guest=True)
+def manage_request_confirmation_template():
     """Manage request confirmation email template
    
     Actions:
@@ -7550,6 +7807,29 @@ def manage_request_confirmation_template(action="get", email_subject=None, email
     """
    
     try:
+        # Get data from request - handles both form data and JSON
+        if frappe.request.method == "POST":
+            if frappe.request.is_json:
+                # JSON request from Postman
+                data = frappe.request.get_json()
+            else:
+                # Form data request
+                data = frappe.form_dict
+        else:
+            # GET request
+            data = frappe.form_dict
+        
+        # Extract parameters
+        action = data.get("action", "get")
+        email_subject = data.get("email_subject")
+        email_body = data.get("email_body")
+        
+        # Log what we received
+        frappe.log_error(
+            f"Action: {action}, Subject: {email_subject[:50] if email_subject else None}, Body length: {len(email_body) if email_body else 0}", 
+            "Template Debug"
+        )
+        
         TEMPLATE_NAME = "request_confirmation"
        
         DEFAULT_SUBJECT = "🚚 Logistics Request Confirmation - {request_id}"
@@ -7658,39 +7938,89 @@ def manage_request_confirmation_template(action="get", email_subject=None, email
        
         elif action == "update":
             if not email_subject or not email_body:
-                return {"success": False, "message": "Subject and body are required"}
+                frappe.log_error("Missing subject or body", "Template Update Error")
+                return {
+                    "success": False, 
+                    "message": "Subject and body are required"
+                }
            
-            # Check if template exists
-            template = frappe.db.sql("""
-                SELECT name FROM `tabEmail Template Config`
-                WHERE template_name = %s
-                LIMIT 1
-            """, TEMPLATE_NAME, as_dict=True)
-           
-            if template:
-                # Update existing template
-                frappe.db.sql("""
-                    UPDATE `tabEmail Template Config`
-                    SET email_subject = %s, email_body = %s, modified = %s
+            try:
+                # Check if template exists
+                existing = frappe.db.sql("""
+                    SELECT name FROM `tabEmail Template Config`
                     WHERE template_name = %s
-                """, (email_subject, email_body, frappe.utils.now(), TEMPLATE_NAME))
-            else:
-                # Create new template
-                frappe.db.sql("""
-                    INSERT INTO `tabEmail Template Config`
-                    (name, template_name, email_subject, email_body, creation, modified)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (TEMPLATE_NAME, TEMPLATE_NAME, email_subject, email_body, frappe.utils.now(), frappe.utils.now()))
-           
-            frappe.db.commit()
-           
-            return {
-                "success": True,
-                "message": "Request confirmation template updated successfully",
-                "template_name": TEMPLATE_NAME,
-                "email_subject": email_subject,
-                "email_body": email_body
-            }
+                    LIMIT 1
+                """, TEMPLATE_NAME, as_dict=True)
+                
+                frappe.log_error(f"Template exists: {bool(existing)}", "Template Update")
+               
+                if existing:
+                    # Update existing template
+                    frappe.log_error(f"Updating template: {existing[0]['name']}", "Template Update")
+                    frappe.db.sql("""
+                        UPDATE `tabEmail Template Config`
+                        SET email_subject = %s, 
+                            email_body = %s, 
+                            modified = %s,
+                            modified_by = %s
+                        WHERE template_name = %s
+                    """, (
+                        email_subject, 
+                        email_body, 
+                        frappe.utils.now(), 
+                        frappe.session.user,
+                        TEMPLATE_NAME
+                    ))
+                else:
+                    # Create new template
+                    frappe.log_error("Creating new template", "Template Update")
+                    new_name = frappe.generate_hash(length=10)
+                    frappe.db.sql("""
+                        INSERT INTO `tabEmail Template Config`
+                        (name, template_name, email_subject, email_body, creation, modified, modified_by, owner, docstatus, idx)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, 0)
+                    """, (
+                        new_name,
+                        TEMPLATE_NAME, 
+                        email_subject, 
+                        email_body, 
+                        frappe.utils.now(), 
+                        frappe.utils.now(),
+                        frappe.session.user,
+                        frappe.session.user
+                    ))
+               
+                frappe.db.commit()
+                
+                # Verify the update
+                updated = frappe.db.sql("""
+                    SELECT email_subject, email_body
+                    FROM `tabEmail Template Config`
+                    WHERE template_name = %s
+                    LIMIT 1
+                """, TEMPLATE_NAME, as_dict=True)
+                
+                frappe.log_error(
+                    f"Verification - Subject matches: {updated[0]['email_subject'] == email_subject}, Body length: {len(updated[0]['email_body'])}", 
+                    "Template Update Success"
+                )
+               
+                return {
+                    "success": True,
+                    "message": "Request confirmation template updated successfully",
+                    "template_name": TEMPLATE_NAME,
+                    "email_subject": updated[0]['email_subject'],
+                    "email_body": updated[0]['email_body'],
+                    "is_custom": True
+                }
+                
+            except Exception as e:
+                frappe.log_error(f"Update failed: {str(e)}\n{frappe.get_traceback()}", "Template Update Error")
+                frappe.db.rollback()
+                return {
+                    "success": False, 
+                    "message": f"Update failed: {str(e)}"
+                }
        
         elif action == "reset":
             # Delete custom template to revert to defaults
@@ -7706,7 +8036,8 @@ def manage_request_confirmation_template(action="get", email_subject=None, email
                 "message": "Template reset to default",
                 "template_name": TEMPLATE_NAME,
                 "email_subject": DEFAULT_SUBJECT,
-                "email_body": DEFAULT_BODY
+                "email_body": DEFAULT_BODY,
+                "is_custom": False
             }
        
         elif action == "preview":
@@ -7758,17 +8089,17 @@ def manage_request_confirmation_template(action="get", email_subject=None, email
             }
        
         else:
-            return {"success": False, "message": f"Invalid action: {action}"}
+            return {
+                "success": False, 
+                "message": f"Invalid action: {action}. Valid actions are: get, update, reset, preview"
+            }
            
     except Exception as e:
-        frappe.log_error(f"Request Confirmation Template Error: {str(e)}")
-        return {"success": False, "message": str(e)}
-
-
-
-
-
-
+        frappe.log_error(f"Request Confirmation Template Error: {str(e)}\n{frappe.get_traceback()}", "Template API Error")
+        return {
+            "success": False, 
+            "message": f"An error occurred: {str(e)}"
+        }
 
 
 
