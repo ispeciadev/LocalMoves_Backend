@@ -5,7 +5,7 @@ from frappe import _
 
 JWT_SECRET = "my_secret_key"
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRY_HOURS = 24
+JWT_EXPIRY_HOURS = 168  # 7 days instead of 24 hours
 
 
 def generate_token(user_id, email, role):

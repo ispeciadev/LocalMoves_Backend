@@ -1,0 +1,120 @@
+{
+    "actions": [],
+    "allow_rename": 0,
+    "autoname": "format:BH-{YYYY}-{#####}",
+    "creation": "2025-12-18 11:30:00.000000",
+    "doctype": "DocType",
+    "editable_grid": 1,
+    "engine": "InnoDB",
+    "field_order": [
+        "holiday_details_section",
+        "year",
+        "date",
+        "day_of_week",
+        "column_break_4",
+        "holiday_name",
+        "multiplier",
+        "is_active",
+        "section_break_timestamps",
+        "created_at",
+        "updated_at"
+    ],
+    "fields": [
+        {
+            "fieldname": "holiday_details_section",
+            "fieldtype": "Section Break",
+            "label": "Holiday Details"
+        },
+        {
+            "fieldname": "year",
+            "fieldtype": "Int",
+            "in_list_view": 1,
+            "label": "Year",
+            "reqd": 1
+        },
+        {
+            "fieldname": "date",
+            "fieldtype": "Date",
+            "in_list_view": 1,
+            "label": "Date",
+            "reqd": 1,
+            "unique": 1
+        },
+        {
+            "fieldname": "day_of_week",
+            "fieldtype": "Data",
+            "label": "Day of Week",
+            "read_only": 1
+        },
+        {
+            "fieldname": "column_break_4",
+            "fieldtype": "Column Break"
+        },
+        {
+            "fieldname": "holiday_name",
+            "fieldtype": "Data",
+            "in_list_view": 1,
+            "label": "Holiday Name",
+            "reqd": 1
+        },
+        {
+            "default": "1.6",
+            "fieldname": "multiplier",
+            "fieldtype": "Float",
+            "in_list_view": 1,
+            "label": "Price Multiplier",
+            "precision": "2",
+            "reqd": 1,
+            "description": "Multiplier applied to base price (e.g., 1.6 = 60% increase)"
+        },
+        {
+            "default": "1",
+            "fieldname": "is_active",
+            "fieldtype": "Check",
+            "label": "Is Active"
+        },
+        {
+            "fieldname": "section_break_timestamps",
+            "fieldtype": "Section Break",
+            "label": "Timestamps"
+        },
+        {
+            "fieldname": "created_at",
+            "fieldtype": "Datetime",
+            "label": "Created At",
+            "read_only": 1
+        },
+        {
+            "fieldname": "updated_at",
+            "fieldtype": "Datetime",
+            "label": "Updated At",
+            "read_only": 1
+        }
+    ],
+    "index_web_pages_for_search": 1,
+    "links": [],
+    "modified": "2025-12-18 11:30:00.000000",
+    "modified_by": "Administrator",
+    "module": "Localmoves",
+    "name": "Bank Holiday",
+    "naming_rule": "Expression",
+    "owner": "Administrator",
+    "permissions": [
+        {
+            "create": 1,
+            "delete": 1,
+            "email": 1,
+            "export": 1,
+            "print": 1,
+            "read": 1,
+            "report": 1,
+            "role": "System Manager",
+            "share": 1,
+            "write": 1
+        }
+    ],
+    "sort_field": "date",
+    "sort_order": "ASC",
+    "states": [],
+    "track_changes": 1
+}

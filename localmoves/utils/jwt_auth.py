@@ -34,8 +34,8 @@ def validate_jwt_before_request():
         frappe.throw(_("Missing token after Bearer"), frappe.AuthenticationError)
 
     try:
-        # ✅ Decode JWT
-        decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        # ✅ Decode JWT with 3600 second leeway for clock skew
+        decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"], options={"leeway": 3600})
         user_id = decoded.get("user_id")
 
         if not user_id:

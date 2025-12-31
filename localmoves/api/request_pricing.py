@@ -67,6 +67,15 @@ COLLECTION_TIME_MULTIPLIERS = {
     'morning': 1.0,           # 9am-5pm standard
     'afternoon': 1.0,         # 9am-5pm standard
 }
+DEFAULT_LOADING_COST_PER_M3 = 38.50
+DEFAULT_COST_PER_MILE_UNDER_100 = 1.00
+DEFAULT_COST_PER_MILE_OVER_100 = 0.50
+DEFAULT_ASSEMBLY_PER_M3 = 50.00
+DEFAULT_DISASSEMBLY_PER_M3 = 25.00
+DEFAULT_PACKING_PERCENTAGE = 0.35
+
+
+
 
 
 
@@ -116,65 +125,170 @@ def get_multiplier_constants():
 
 
 
+# def calculate_total_volume(pricing_data):
+#     """
+#     Calculate total volume based on property type
+   
+#     Returns: float (m³)
+#     """
+#     property_type = pricing_data.get('property_type')
+#     total_volume = 0
+   
+#     # Load dynamic config
+#     volume_config = get_volume_constants()
+#     property_volumes = volume_config.get('property_volumes', {})
+#     additional_spaces = volume_config.get('additional_spaces', {})
+#     quantity_multipliers = volume_config.get('quantity_multipliers', {})
+#     vehicle_space_multipliers = volume_config.get('vehicle_space_multipliers', {})
+   
+#     if property_type == 'a_few_items':
+#         vehicle_type = pricing_data.get('vehicle_type')
+#         space_usage = pricing_data.get('space_usage', 'whole_van')
+       
+#         base_volume = property_volumes.get('a_few_items', {}).get(vehicle_type, 0)
+#         multiplier = vehicle_space_multipliers.get(space_usage, 1.0)
+#         total_volume = base_volume * multiplier
+       
+#     elif property_type == 'house':
+#         house_size = pricing_data.get('house_size')
+#         add_spaces = pricing_data.get('additional_spaces', [])
+#         quantity = pricing_data.get('quantity', 'everything')
+       
+#         base_volume = property_volumes.get('house', {}).get(house_size, 0)
+       
+#         # Add additional spaces
+#         for space in add_spaces:
+#             base_volume += additional_spaces.get(space, 0)
+       
+#         # Apply quantity multiplier
+#         multiplier = quantity_multipliers.get(quantity, 1.0)
+#         total_volume = base_volume * multiplier
+       
+#     elif property_type == 'flat':
+#         flat_size = pricing_data.get('flat_size')
+#         quantity = pricing_data.get('quantity', 'everything')
+       
+#         base_volume = property_volumes.get('flat', {}).get(flat_size, 0)
+#         multiplier = quantity_multipliers.get(quantity, 1.0)
+#         total_volume = base_volume * multiplier
+       
+#     elif property_type == 'office':
+#         office_size = pricing_data.get('office_size')
+#         quantity = pricing_data.get('quantity', 'everything')
+       
+#         base_volume = property_volumes.get('office', {}).get(office_size, 0)
+#         multiplier = quantity_multipliers.get(quantity, 1.0)
+#         total_volume = base_volume * multiplier
+   
+#     return round(total_volume, 2)
+
+
 def calculate_total_volume(pricing_data):
     """
     Calculate total volume based on property type
-   
+    
+    PRIORITY:
+    1. If selected_items provided -> Calculate from database items
+    2. Otherwise -> Use predefined property sizes
+    
     Returns: float (m³)
     """
     property_type = pricing_data.get('property_type')
     total_volume = 0
-   
+
     # Load dynamic config
     volume_config = get_volume_constants()
     property_volumes = volume_config.get('property_volumes', {})
     additional_spaces = volume_config.get('additional_spaces', {})
     quantity_multipliers = volume_config.get('quantity_multipliers', {})
     vehicle_space_multipliers = volume_config.get('vehicle_space_multipliers', {})
-   
+
+    # ===== NEW: CHECK FOR SELECTED_ITEMS FIRST =====
+    selected_items = pricing_data.get('selected_items')
+    
+    if selected_items and isinstance(selected_items, dict) and len(selected_items) > 0:
+        # Calculate volume from individual items in database
+        frappe.logger().info(f"Calculating volume from {len(selected_items)} selected items")
+        
+        for item_name, quantity in selected_items.items():
+            try:
+                # Query database for item volume
+                item_data = frappe.db.sql("""
+                    SELECT average_volume 
+                    FROM `tabMoving Inventory Item`
+                    WHERE item_name = %s
+                    LIMIT 1
+                """, (item_name,), as_dict=True)
+                
+                if item_data:
+                    item_volume = float(item_data[0]['average_volume'])
+                    item_quantity = int(quantity)
+                    item_total = item_volume * item_quantity
+                    total_volume += item_total
+                    
+                    frappe.logger().info(f"Item: {item_name}, Volume: {item_volume} m³, Qty: {item_quantity}, Total: {item_total} m³")
+                else:
+                    frappe.logger().warning(f"Item not found in database: {item_name}")
+                    
+            except Exception as e:
+                frappe.log_error(f"Error calculating volume for item {item_name}: {str(e)}", "Volume Calculation Error")
+        
+        # Add additional spaces if provided
+        add_spaces = pricing_data.get('additional_spaces', [])
+        if add_spaces:
+            for space in add_spaces:
+                space_volume = additional_spaces.get(space, 0)
+                total_volume += space_volume
+                frappe.logger().info(f"Added space: {space}, Volume: {space_volume} m³")
+        
+        frappe.logger().info(f"Total volume from selected items: {total_volume} m³")
+        return round(total_volume, 2)
+    
+    # ===== FALLBACK: USE PREDEFINED PROPERTY SIZES =====
+    
     if property_type == 'a_few_items':
         vehicle_type = pricing_data.get('vehicle_type')
         space_usage = pricing_data.get('space_usage', 'whole_van')
-       
+
         base_volume = property_volumes.get('a_few_items', {}).get(vehicle_type, 0)
         multiplier = vehicle_space_multipliers.get(space_usage, 1.0)
         total_volume = base_volume * multiplier
-       
+
     elif property_type == 'house':
-        house_size = pricing_data.get('house_size')
+        # Support both 'house_size' and 'property_size' field names
+        house_size = pricing_data.get('house_size') or pricing_data.get('property_size')
         add_spaces = pricing_data.get('additional_spaces', [])
         quantity = pricing_data.get('quantity', 'everything')
-       
+
         base_volume = property_volumes.get('house', {}).get(house_size, 0)
-       
+
         # Add additional spaces
         for space in add_spaces:
             base_volume += additional_spaces.get(space, 0)
-       
+
         # Apply quantity multiplier
         multiplier = quantity_multipliers.get(quantity, 1.0)
         total_volume = base_volume * multiplier
-       
+
     elif property_type == 'flat':
-        flat_size = pricing_data.get('flat_size')
+        # Support both 'flat_size' and 'property_size'
+        flat_size = pricing_data.get('flat_size') or pricing_data.get('property_size')
         quantity = pricing_data.get('quantity', 'everything')
-       
+
         base_volume = property_volumes.get('flat', {}).get(flat_size, 0)
         multiplier = quantity_multipliers.get(quantity, 1.0)
         total_volume = base_volume * multiplier
-       
+
     elif property_type == 'office':
-        office_size = pricing_data.get('office_size')
+        # Support both 'office_size' and 'property_size'
+        office_size = pricing_data.get('office_size') or pricing_data.get('property_size')
         quantity = pricing_data.get('quantity', 'everything')
-       
+
         base_volume = property_volumes.get('office', {}).get(office_size, 0)
         multiplier = quantity_multipliers.get(quantity, 1.0)
         total_volume = base_volume * multiplier
-   
+
     return round(total_volume, 2)
-
-
-
 
 
 

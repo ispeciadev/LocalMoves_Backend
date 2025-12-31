@@ -15,8 +15,10 @@ from localmoves.utils.config_manager import (
     get_notice_period_multipliers,   # ADD THIS
     get_move_day_multipliers         # ADD THIS
 )
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
+import calendar as cal
+
 
 
 
@@ -103,6 +105,29 @@ def check_company_can_view_requests(company):
     
     # Check if under limit
     return viewed_count < limit
+
+
+def check_company_has_jobs_service(company):
+    """
+    Check if company has an active Jobs subscription plan (can accept bookings)
+    
+    Args:
+        company: Company dict with leads_plan or jobs_plan
+    
+    Returns:
+        bool: True if company has Jobs service active, False otherwise
+    """
+    leads_plan = company.get('leads_plan', '')
+    jobs_plan = company.get('jobs_plan', '')
+    subscription_plan = company.get('subscription_plan', '')
+    
+    # Company must have an active Jobs plan to accept bookings
+    # Jobs plans start with "Jobs_"
+    # Also check legacy subscription_plan field for backward compatibility
+    has_jobs = (jobs_plan and str(jobs_plan).startswith('Jobs_')) or \
+              (subscription_plan and str(subscription_plan).startswith('Jobs_'))
+    
+    return has_jobs
 
 
 # ------------------------- Helper Function ------------------------- #
@@ -286,6 +311,76 @@ def parse_json_fields(company):
     
     # CRITICAL: Always return the dict
     return company
+
+
+def get_property_assessment_multiplier(collection_parking=None, collection_parking_distance=None, 
+                                       collection_house_type=None, collection_internal_access=None, 
+                                       collection_floor_level=None,
+                                       delivery_parking=None, delivery_parking_distance=None, 
+                                       delivery_house_type=None, delivery_internal_access=None, 
+                                       delivery_floor_level=None, property_type='office'):
+    """
+    Calculate property assessment multiplier from property assessment parameters.
+    Used by calendar_pricing API to apply property assessment to base price.
+    
+    Returns: float multiplier (e.g., 1.05 for +5% increment)
+    """
+    try:
+        # Get assessment config from dynamic config manager
+        COLLECTION_ASSESSMENT = get_collection_assessment()
+        
+        # CRITICAL FIX: Replace empty strings with None to avoid lookup errors
+        collection_parking = collection_parking if collection_parking else None
+        collection_parking_distance = collection_parking_distance if collection_parking_distance else None
+        collection_house_type = collection_house_type if collection_house_type else None
+        collection_internal_access = collection_internal_access if collection_internal_access else None
+        collection_floor_level = collection_floor_level if collection_floor_level else None
+        delivery_parking = delivery_parking if delivery_parking else None
+        delivery_parking_distance = delivery_parking_distance if delivery_parking_distance else None
+        delivery_house_type = delivery_house_type if delivery_house_type else None
+        delivery_internal_access = delivery_internal_access if delivery_internal_access else None
+        delivery_floor_level = delivery_floor_level if delivery_floor_level else None
+        
+        # Collection Assessment - Load from config_manager (dynamic, not hardcoded)
+        collection_increment = 0.0
+        if collection_parking:
+            collection_increment += COLLECTION_ASSESSMENT['parking'].get(collection_parking, 0.0)
+        if collection_parking_distance:
+            collection_increment += COLLECTION_ASSESSMENT['parking_distance'].get(collection_parking_distance, 0.0)
+        
+        if property_type in ['house']:
+            if collection_house_type:
+                collection_increment += COLLECTION_ASSESSMENT['house_type'].get(collection_house_type, 0.0)
+        else:
+            if collection_internal_access:
+                collection_increment += COLLECTION_ASSESSMENT['internal_access'].get(collection_internal_access, 0.0)
+            if collection_floor_level:
+                collection_increment += COLLECTION_ASSESSMENT['floor_level'].get(collection_floor_level, 0.0)
+        
+        # Delivery Assessment (same structure)
+        delivery_increment = 0.0
+        if delivery_parking:
+            delivery_increment += COLLECTION_ASSESSMENT['parking'].get(delivery_parking, 0.0)
+        if delivery_parking_distance:
+            delivery_increment += COLLECTION_ASSESSMENT['parking_distance'].get(delivery_parking_distance, 0.0)
+        
+        if property_type in ['house']:
+            if delivery_house_type:
+                delivery_increment += COLLECTION_ASSESSMENT['house_type'].get(delivery_house_type, 0.0)
+        else:
+            if delivery_internal_access:
+                delivery_increment += COLLECTION_ASSESSMENT['internal_access'].get(delivery_internal_access, 0.0)
+            if delivery_floor_level:
+                delivery_increment += COLLECTION_ASSESSMENT['floor_level'].get(delivery_floor_level, 0.0)
+        
+        collection_multiplier = 1.0 + collection_increment
+        delivery_multiplier = 1.0 + delivery_increment
+        combined_multiplier = collection_multiplier * delivery_multiplier
+        
+        return combined_multiplier
+    except Exception as e:
+        frappe.log_error(f"Property Assessment Multiplier Error: {str(e)}", "Property Assessment")
+        return 1.0  # Default to no multiplier if error occurs
 
 # def format_company_response(company_doc):
 #     """Format company document for API response with all pricing"""
@@ -1006,6 +1101,7 @@ def search_number_of_companies_by_pincode(pincode=None):
 def auto_calculate_volumes(selected_items, dismantle_items):
     """
     Automatically calculate packing, dismantling, and reassembly volumes
+    NOW PACKS EVERY ITEM - ignoring keywords
     
     Args:
         selected_items: Dict of item names and quantities
@@ -1014,23 +1110,6 @@ def auto_calculate_volumes(selected_items, dismantle_items):
     Returns:
         dict with packing_volume_m3, dismantling_volume_m3, reassembly_volume_m3
     """
-    # Items that ALWAYS need packing (small/fragile items)
-    # ALWAYS_PACK_KEYWORDS = [
-    #     'ornaments', 'fragile', 'plant', 'suitcase', 'boxes',
-    #     'kitchen bin', 'general', 'garden tools', 'shelves contents',
-    #     'misc', 'other', 'accessories', 'decorations'
-    # ]
-    
-    # # Items that NEVER need packing (large furniture/appliances)
-    # NEVER_PACK_KEYWORDS = [
-    #     'bed', 'mattress', 'sofa', 'wardrobe', 'table', 'chair',
-    #     'desk', 'cabinet', 'bookcase', 'chest', 'drawers',
-    #     'fridge', 'freezer', 'washing', 'dishwasher', 'cooker',
-    #     'tv', 'stand', 'sideboard', 'cot', 'bunk'
-    # ]
-    
-    # Small threshold: items under this volume (m³) need packing
-    SMALL_ITEM_THRESHOLD = 0.5  # Items smaller than 0.5m³ typically need packing
     
     packing_volume = 0
     dismantling_volume = 0
@@ -1039,42 +1118,18 @@ def auto_calculate_volumes(selected_items, dismantle_items):
     for item_name, quantity in selected_items.items():
         try:
             # Get item from inventory
+            if not frappe.db.exists("Moving Inventory Item", item_name):
+                continue
+                
             item = frappe.get_doc("Moving Inventory Item", item_name)
             volume_per_item = item.average_volume
             total_item_volume = volume_per_item * int(quantity)
             
-            item_name_lower = item_name.lower()
+            # ========== PACK EVERY ITEM ==========
+            # Don't use keywords - pack everything
+            packing_volume += total_item_volume
             
-            # ========== 1. PACKING VOLUME ==========
-            needs_packing = False
-            
-            # First check: Does it ALWAYS need packing? (small items)
-            for keyword in ALWAYS_PACK_KEYWORDS:
-                if keyword in item_name_lower:
-                    needs_packing = True
-                    break
-            
-            # Second check: Is it large furniture that NEVER needs packing?
-            is_large_furniture = False
-            for keyword in NEVER_PACK_KEYWORDS:
-                if keyword in item_name_lower:
-                    is_large_furniture = True
-                    break
-            
-            # If not explicitly categorized, use volume threshold
-            if not needs_packing and not is_large_furniture:
-                if volume_per_item < SMALL_ITEM_THRESHOLD:
-                    needs_packing = True
-            
-            # Override: large furniture never gets packed
-            if is_large_furniture:
-                needs_packing = False
-            
-            # Add to packing volume if needed
-            if needs_packing:
-                packing_volume += total_item_volume
-            
-            # ========== 2. DISMANTLING VOLUME ==========
+            # ========== DISMANTLING VOLUME ==========
             # Check if item is marked for dismantling
             if dismantle_items.get(item_name, False):
                 dismantling_volume += total_item_volume
@@ -1091,7 +1146,6 @@ def auto_calculate_volumes(selected_items, dismantle_items):
         'dismantling_volume_m3': round(dismantling_volume, 2),
         'reassembly_volume_m3': round(reassembly_volume, 2)
     }
-
 
 def calculate_total_volume(pricing_data):
     """Calculate total volume based on property type"""
@@ -1715,21 +1769,12 @@ def get_all_companies():
         frappe.log_error(f"Get All Companies Error: {str(e)}", "Get All Companies")
         frappe.local.response['http_status_code'] = 500
         return {"success": False, "message": f"Failed to fetch companies: {str(e)}"}
-    
 
-
-"""
-CORRECTED search_companies_with_cost
-Aligned with request_pricing.py spreadsheet formula
-"""
-
-# OPTIMIZED search_companies_with_cost - Fully Integrated with config_manager.py
-# This version uses config_manager for ALL constants instead of hardcoding
 
 @frappe.whitelist(allow_guest=True)
 def search_companies_with_cost(
-    pincode=None, 
-    selected_items=None, 
+    pincode=None,
+    selected_items=None,
     dismantle_items=None,
     distance_miles=None,
     pickup_address=None,
@@ -1740,90 +1785,128 @@ def search_companies_with_cost(
     property_size=None,
     additional_spaces=None,
     quantity=None,
+    # Optional extras - CHANGED TO USE SPREADSHEET FORMULA
     include_packing=True,
     include_dismantling=True,
     include_reassembly=True,
+    # Collection assessment - CHANGED TO USE ADDITIVE INCREMENTS
     collection_parking=None,
     collection_parking_distance=None,
-    collection_house_type=None,
-    collection_internal_access=None,
-    collection_floor_level=None,
+    collection_house_type=None,  # For houses
+    collection_internal_access=None,  # For flats/offices
+    collection_floor_level=None,  # For flats/offices
+    # Delivery assessment
     delivery_parking=None,
     delivery_parking_distance=None,
     delivery_house_type=None,
     delivery_internal_access=None,
     delivery_floor_level=None,
+    # Move date data
     notice_period=None,
     move_day=None,
+    selected_move_date=None,
     collection_time=None,
     user_email=None,
-    send_email=False
+    send_email=False,
+    # ✅ CRITICAL: Accept current_date from frontend to ensure timezone consistency
+    current_date=None
 ):
     """
-    Search companies with EXACT pricing using config_manager.py
-    All constants are now dynamically loaded from System Configuration
+    Search companies with EXACT pricing as per request_pricing.py
+   
+    KEY CHANGES:
+    1. Uses ADDITIVE property assessment (not multiplicative)
+    2. Packing = 35% of Inventory Cost (not per volume)
+    3. Assembly/Disassembly per m³ (as per spreadsheet)
+    4. Correct ADDITIONAL_SPACES values
     """
     try:
         data = get_request_data()
-        
-        # Extract parameters
-        pincode = pincode or data.get("pincode")
-        selected_items = selected_items or data.get("selected_items")
-        dismantle_items = dismantle_items or data.get("dismantle_items")
-        distance_miles = distance_miles or data.get("distance_miles", 0)
-        
+       
+        # ✅ DEBUG: Log entire request data to see what we're receiving
+        frappe.logger().info(f"search_companies_with_cost request data: {json.dumps(data, default=str)}")
+       
+        # Extract parameters - PRIORITIZE DATA from request body
+        pincode = data.get("pincode") or pincode
+        selected_items = data.get("selected_items") or selected_items
+        dismantle_items = data.get("dismantle_items") or dismantle_items
+        distance_miles = data.get("distance_miles") or distance_miles or 0
+       
         pickup_address = pickup_address or data.get("pickup_address")
         pickup_city = pickup_city or data.get("pickup_city")
         delivery_address = delivery_address or data.get("delivery_address")
         delivery_city = delivery_city or data.get("delivery_city")
-        
+       
         property_type = property_type or data.get("property_type")
         property_size = property_size or data.get("property_size")
         additional_spaces = additional_spaces or data.get("additional_spaces", [])
         quantity = quantity or data.get("quantity", "everything")
-        
+       
         include_packing = data.get("include_packing", True) if "include_packing" in data else True
         include_dismantling = data.get("include_dismantling", True) if "include_dismantling" in data else True
         include_reassembly = data.get("include_reassembly", True) if "include_reassembly" in data else True
-        
-        # Collection assessment
+       
+        # Collection assessment - ADDITIVE
         collection_parking = collection_parking or data.get("collection_parking", "driveway")
         collection_parking_distance = collection_parking_distance or data.get("collection_parking_distance", "less_than_10m")
         collection_house_type = collection_house_type or data.get("collection_house_type", "house_ground_and_1st")
         collection_internal_access = collection_internal_access or data.get("collection_internal_access", "stairs_only")
         collection_floor_level = collection_floor_level or data.get("collection_floor_level", "ground_floor")
-        
+       
         # Delivery assessment
         delivery_parking = delivery_parking or data.get("delivery_parking", "driveway")
         delivery_parking_distance = delivery_parking_distance or data.get("delivery_parking_distance", "less_than_10m")
         delivery_house_type = delivery_house_type or data.get("delivery_house_type", "house_ground_and_1st")
         delivery_internal_access = delivery_internal_access or data.get("delivery_internal_access", "stairs_only")
         delivery_floor_level = delivery_floor_level or data.get("delivery_floor_level", "ground_floor")
-        
+       
         # Move date data
         notice_period = notice_period or data.get("notice_period", "within_month")
         move_day = move_day or data.get("move_day", "sun_to_thurs")
         collection_time = collection_time or data.get("collection_time", "flexible")
-        
+        selected_move_date = selected_move_date or data.get("selected_move_date")  # NEW: Calendar-selected date
+       
         user_email = user_email or data.get("user_email")
         send_email = send_email or data.get("send_email", False)
-        
+       
+        # ✅ CRITICAL: Accept current_date from frontend (added to parameter extraction)
+        current_date = current_date or data.get("current_date")
+       
         if not pincode:
             frappe.local.response['http_status_code'] = 400
             return {"success": False, "message": "Pincode is required"}
         
-        # Parse JSON inputs
+        # Validate property_size if property_type provided but no items
+        if property_type and not selected_items and not property_size:
+            frappe.local.response['http_status_code'] = 400
+            return {"success": False, "message": f"Property size is required for property type '{property_type}'"}
+       
+        # Parse JSON inputs - ENSURE SELECTED_ITEMS IS PROPERLY PARSED
         if isinstance(selected_items, str):
-            selected_items = json.loads(selected_items)
+            try:
+                selected_items = json.loads(selected_items)
+            except:
+                frappe.log_error(f"Failed to parse selected_items JSON: {selected_items}", "Search Cost")
+                selected_items = None
         if isinstance(dismantle_items, str):
-            dismantle_items = json.loads(dismantle_items)
+            try:
+                dismantle_items = json.loads(dismantle_items)
+            except:
+                dismantle_items = None
         if isinstance(additional_spaces, str):
-            additional_spaces = json.loads(additional_spaces)
-        
+            try:
+                additional_spaces = json.loads(additional_spaces)
+            except:
+                additional_spaces = None
+       
         selected_items = selected_items or {}
         dismantle_items = dismantle_items or {}
         additional_spaces = additional_spaces or []
-        
+       
+        # ✅ DEBUG: Log selected_items to verify it's being received
+        if selected_items:
+            frappe.logger().info(f"search_companies_with_cost received selected_items: {selected_items}")
+       
         # Get user email from token if needed
         if send_email and not user_email:
             try:
@@ -1831,110 +1914,134 @@ def search_companies_with_cost(
                 user_email = user_info.get('email')
             except:
                 user_email = None
-        
-        # ========== LOAD ALL CONSTANTS FROM CONFIG MANAGER ==========
-        additional_spaces_config = get_additional_spaces()
-        property_volumes_config = get_property_volumes()
-        quantity_multipliers_config = get_quantity_multipliers()
-        collection_assessment_config = get_collection_assessment()
-        notice_multipliers_config = get_notice_period_multipliers()
-        move_day_multipliers_config = get_move_day_multipliers()
-        pricing_config = get_pricing_config()
-        
-        # ========== INITIALIZE ALL VOLUME VARIABLES ==========
+       
+        # ========== CALCULATE TOTAL VOLUME ==========
         total_volume_m3 = 0
-        packing_volume_m3 = 0
-        dismantling_volume_m3 = 0
-        reassembly_volume_m3 = 0
         item_details = []
-        missing_items = []
-        
-        # ========== CALCULATE VOLUMES FROM SELECTED ITEMS ==========
+       
+        # CORRECTED ADDITIONAL_SPACES VALUES (as per request_pricing.py)
+        CORRECTED_ADDITIONAL_SPACES = {
+            'shed': 4,
+            'loft': 6,
+            'basement': 10,
+            'single_garage': 8,
+            'double_garage': 15,
+        }
+       
         if selected_items:
+            missing_items = []
             for item_name, quantity_val in selected_items.items():
                 try:
-                    # Check if item exists first
-                    if not frappe.db.exists("Moving Inventory Item", item_name):
-                        missing_items.append(item_name)
-                        safe_log("Missing Inventory Item", f"Item '{item_name}' not found in database")
-                        continue
+                    # Try to find the item (handle both exact names and fuzzy matching if needed)
+                    item_exists = frappe.db.exists("Moving Inventory Item", item_name)
                     
+                    if not item_exists:
+                        # Try searching by name field (case-insensitive)
+                        frappe.logger().warn(f"Exact match not found for: {item_name}, trying fuzzy search...")
+                        item_doc = frappe.db.get_value(
+                            "Moving Inventory Item",
+                            filters=[["name", "like", f"%{item_name}%"]],
+                            fieldname="name"
+                        )
+                        if item_doc:
+                            item_name = item_doc  # Use the found name
+                            frappe.logger().info(f"Found fuzzy match: {item_name}")
+                        else:
+                            frappe.logger().warn(f"Item not found in inventory (fuzzy): {item_name}")
+                            missing_items.append(item_name)
+                            continue
+                       
                     item = frappe.get_doc("Moving Inventory Item", item_name)
-                    volume_per_item = item.average_volume
-                    item_quantity = int(quantity_val)
-                    item_total_volume = volume_per_item * item_quantity
-                    
-                    total_volume_m3 += item_total_volume
-                    
-                    # Check if this item is marked for dismantling
-                    if dismantle_items.get(item_name, False):
-                        dismantling_volume_m3 += item_total_volume
-                    
-                    # Check if this item needs packing (small items)
-                    item_name_lower = item_name.lower()
-                    needs_packing = determine_if_needs_boxing(item_name_lower, volume_per_item)
-                    if needs_packing:
-                        packing_volume_m3 += item_total_volume
-                    
+                    volume = item.average_volume * int(quantity_val)
+                    total_volume_m3 += volume
+                   
                     item_details.append({
                         "item_name": item_name,
-                        "quantity": item_quantity,
-                        "volume_per_item": volume_per_item,
-                        "total_volume": round(item_total_volume, 2),
+                        "quantity": quantity_val,
+                        "volume_per_item": item.average_volume,
+                        "total_volume": round(volume, 2),
                         "needs_dismantling": dismantle_items.get(item_name, False),
-                        "needs_packing": needs_packing
+                        "packing_cost_per_item": 0,
+                        "total_packing_cost": 0
                     })
-                    
+                    frappe.logger().info(f"✅ Processed item: {item_name} × {quantity_val} = {volume:.2f} m³")
                 except Exception as e:
+                    frappe.log_error(f"Error processing item {item_name}: {str(e)}", "Search Cost Calculation")
                     missing_items.append(item_name)
-                    safe_log(f"Item Error: {item_name}", str(e))
-                    continue
-        
-        # ========== FALLBACK TO PROPERTY-BASED CALCULATION ==========
+            
+            if missing_items:
+                frappe.logger().warn(f"Missing items: {missing_items}")
+            if item_details:
+                frappe.logger().info(f"✅ Total volume from items: {total_volume_m3} m³")
+       
+        # Calculate from property type if no items
         if total_volume_m3 == 0 and property_type:
+            pricing_data = {
+                'property_type': property_type,
+                'quantity': quantity
+            }
+           
+            if property_type == 'house':
+                pricing_data['house_size'] = property_size
+                pricing_data['additional_spaces'] = additional_spaces
+            elif property_type == 'flat':
+                pricing_data['flat_size'] = property_size
+            elif property_type == 'office':
+                pricing_data['office_size'] = property_size
+            elif property_type == 'a_few_items':
+                pricing_data['vehicle_type'] = property_size
+                pricing_data['space_usage'] = quantity
+           
+            # Use corrected additional spaces - get from dynamic config
             if property_type == 'house' and additional_spaces:
-                # Use config for house calculation with additional spaces
+                config = get_config()
+                property_volumes_config = config.get('property_volumes', {})
                 base_volume = property_volumes_config.get('house', {}).get(property_size, 0)
                 for space in additional_spaces:
-                    base_volume += additional_spaces_config.get(space, 0)
-                multiplier = quantity_multipliers_config.get(quantity, 1.0)
+                    base_volume += CORRECTED_ADDITIONAL_SPACES.get(space, 0)
+                quantity_multipliers = config.get('quantity_multipliers', {})
+                multiplier = quantity_multipliers.get(quantity, 1.0)
                 total_volume_m3 = base_volume * multiplier
             else:
-                # Use standard property calculation
-                pricing_data = {
-                    'property_type': property_type,
-                    'quantity': quantity
-                }
-                
-                if property_type == 'house':
-                    pricing_data['house_size'] = property_size
-                    pricing_data['additional_spaces'] = additional_spaces
-                elif property_type == 'flat':
-                    pricing_data['flat_size'] = property_size
-                elif property_type == 'office':
-                    pricing_data['office_size'] = property_size
-                elif property_type == 'a_few_items':
-                    pricing_data['vehicle_type'] = property_size
-                    pricing_data['space_usage'] = quantity
-                
                 total_volume_m3 = calculate_total_volume(pricing_data)
-            
-            # For property-based, estimate packing/dismantling volumes
-            if include_packing:
-                packing_volume_m3 = total_volume_m3 * 0.3  # 30% needs packing
-            if include_dismantling:
-                dismantling_volume_m3 = total_volume_m3 * 0.1  # 10% needs dismantling
         
-        # If dismantling is included, reassembly volume = dismantling volume
-        reassembly_volume_m3 = dismantling_volume_m3 if include_dismantling else 0
-        
+        # ========== FIX: Use minimum volume if still 0 ==========
+        # If property_size wasn't provided but property_type was, use a minimum default volume
+        if total_volume_m3 == 0 and property_type and property_size is None:
+            config = get_config()
+            property_volumes_config = config.get('property_volumes', {})
+            # Get first available size as default
+            if property_type == 'flat':
+                total_volume_m3 = property_volumes_config.get('flat', {}).get('1_bed', 18)
+            elif property_type == 'house':
+                total_volume_m3 = property_volumes_config.get('house', {}).get('2_bed', 25)
+            elif property_type == 'office':
+                total_volume_m3 = property_volumes_config.get('office', {}).get('2_workstations', 7)
+            elif property_type == 'a_few_items':
+                total_volume_m3 = property_volumes_config.get('a_few_items', {}).get('swb_van', 5)
+       
+        # ========== AUTO-CALCULATE VOLUMES FOR EXTRAS ==========
+        auto_volumes = auto_calculate_volumes(selected_items, dismantle_items)
+       
+        # Calculate volumes for dismantling and reassembly
+        packing_volume_m3 = auto_volumes['packing_volume_m3']
+        dismantling_volume_m3 = auto_volumes['dismantling_volume_m3']
+        reassembly_volume_m3 = auto_volumes['reassembly_volume_m3']
+       
+        # ========== FIX: Use total volume if dismantling/reassembly requested but no items marked ==========
+        # If user requests dismantling/reassembly but didn't specify which items, apply to entire move
+        if include_dismantling and dismantling_volume_m3 == 0:
+            dismantling_volume_m3 = total_volume_m3
+        if include_reassembly and reassembly_volume_m3 == 0:
+            reassembly_volume_m3 = total_volume_m3
+       
         # ========== SEARCH COMPANIES ==========
         companies = frappe.db.sql("""
-            SELECT * 
+            SELECT *
             FROM `tabLogistics Company`
-            WHERE is_active = 1 
+            WHERE is_active = 1
             AND (
-                pincode = %(pincode)s 
+                pincode = %(pincode)s
                 OR areas_covered LIKE %(pincode_pattern)s
             )
             ORDER BY created_at DESC
@@ -1942,54 +2049,88 @@ def search_companies_with_cost(
             "pincode": pincode,
             "pincode_pattern": f'%{pincode}%'
         }, as_dict=True)
-        
+       
         available_companies = []
-        
+        filtered_reasons = []
+       
         for company in companies:
-            # Check subscription limit
-            if not check_company_can_view_requests(company):
-                continue
-            
+            # ========== COMMENTED OUT: Jobs service check ==========
+            # CRITICAL: For booking, ONLY show companies with JOBS service active
+            # Leads service is for initial search/viewing only, NOT for booking
+            # if not check_company_has_jobs_service(company):
+            #     filtered_reasons.append({
+            #         "company_name": company.get('company_name'),
+            #         "reason": "No active Jobs plan",
+            #         "jobs_plan": company.get('jobs_plan'),
+            #         "subscription_plan": company.get('subscription_plan')
+            #     })
+            #     continue
+            # ========================================================
+           
             parse_json_fields(company)
-            
-            # ========== GET COMPANY RATES (with fallback to config defaults) ==========
+           
+            # ========== GET COMPANY RATES ==========
+            config = get_config()
+            pricing_config = config.get('pricing', {})
             company_rates = {
                 'loading_cost_per_m3': float(company.get('loading_cost_per_m3', 0) or pricing_config.get('loading_cost_per_m3', 35.00)),
-                'disassembly_per_m3': float(company.get('disassembly_cost_per_item', 0) or pricing_config.get('disassembly_per_m3', 25.00)),
-                'assembly_per_m3': float(company.get('assembly_cost_per_item', 0) or pricing_config.get('assembly_per_m3', 50.00)),
+                'disassembly_cost_per_m3': float(company.get('disassembly_cost_per_item', 0) or pricing_config.get('disassembly_per_m3', 25.00)),
+                'assembly_cost_per_m3': float(company.get('assembly_cost_per_item', 0) or pricing_config.get('assembly_per_m3', 50.00)),
                 'cost_per_mile_under_100': float(company.get('cost_per_mile_under_25', 0) or pricing_config.get('cost_per_mile_under_100', 0.25)),
                 'cost_per_mile_over_100': float(company.get('cost_per_mile_over_25', 0) or pricing_config.get('cost_per_mile_over_100', 0.15)),
             }
-            
-            # ========== CALCULATE PROPERTY ASSESSMENT (ADDITIVE) - FROM CONFIG ==========
+           
+            # ========== CALCULATE PROPERTY ASSESSMENT (ADDITIVE) ==========
+            # Collection Assessment - Load from config_manager (dynamic, not hardcoded)
+            COLLECTION_ASSESSMENT = get_collection_assessment()
+           
             collection_increment = 0.0
-            collection_increment += collection_assessment_config.get('parking', {}).get(collection_parking, 0.0)
-            collection_increment += collection_assessment_config.get('parking_distance', {}).get(collection_parking_distance, 0.0)
-            
+            collection_increment += COLLECTION_ASSESSMENT['parking'].get(collection_parking, 0.0)
+            collection_increment += COLLECTION_ASSESSMENT['parking_distance'].get(collection_parking_distance, 0.0)
+           
             if property_type in ['house']:
-                collection_increment += collection_assessment_config.get('house_type', {}).get(collection_house_type, 0.0)
+                collection_increment += COLLECTION_ASSESSMENT['house_type'].get(collection_house_type, 0.0)
             else:
-                collection_increment += collection_assessment_config.get('internal_access', {}).get(collection_internal_access, 0.0)
-                collection_increment += collection_assessment_config.get('floor_level', {}).get(collection_floor_level, 0.0)
-            
-            # Delivery Assessment
+                collection_increment += COLLECTION_ASSESSMENT['internal_access'].get(collection_internal_access, 0.0)
+                collection_increment += COLLECTION_ASSESSMENT['floor_level'].get(collection_floor_level, 0.0)
+           
+            # Delivery Assessment (same structure)
             delivery_increment = 0.0
-            delivery_increment += collection_assessment_config.get('parking', {}).get(delivery_parking, 0.0)
-            delivery_increment += collection_assessment_config.get('parking_distance', {}).get(delivery_parking_distance, 0.0)
-            
+            delivery_increment += COLLECTION_ASSESSMENT['parking'].get(delivery_parking, 0.0)
+            delivery_increment += COLLECTION_ASSESSMENT['parking_distance'].get(delivery_parking_distance, 0.0)
+           
             if property_type in ['house']:
-                delivery_increment += collection_assessment_config.get('house_type', {}).get(delivery_house_type, 0.0)
+                delivery_increment += COLLECTION_ASSESSMENT['house_type'].get(delivery_house_type, 0.0)
             else:
-                delivery_increment += collection_assessment_config.get('internal_access', {}).get(delivery_internal_access, 0.0)
-                delivery_increment += collection_assessment_config.get('floor_level', {}).get(delivery_floor_level, 0.0)
-            
+                delivery_increment += COLLECTION_ASSESSMENT['internal_access'].get(delivery_internal_access, 0.0)
+                delivery_increment += COLLECTION_ASSESSMENT['floor_level'].get(delivery_floor_level, 0.0)
+           
             collection_multiplier = 1.0 + collection_increment
             delivery_multiplier = 1.0 + delivery_increment
-            
+           
             # ========== CALCULATE INVENTORY COST ==========
             base_inventory = total_volume_m3 * company_rates['loading_cost_per_m3']
             inventory_cost = base_inventory * collection_multiplier * delivery_multiplier
-            
+           
+            # ========== STORE ASSESSMENT DETAILS FOR CALENDAR ==========
+            company['property_assessment'] = {
+                'collection_parking': collection_parking,
+                'collection_parking_distance': collection_parking_distance,
+                'collection_internal_access': collection_internal_access,
+                'collection_floor_level': collection_floor_level,
+                'collection_house_type': collection_house_type,
+                'delivery_parking': delivery_parking,
+                'delivery_parking_distance': delivery_parking_distance,
+                'delivery_internal_access': delivery_internal_access,
+                'delivery_floor_level': delivery_floor_level,
+                'delivery_house_type': delivery_house_type,
+                'collection_increment': round(collection_increment, 2),
+                'delivery_increment': round(delivery_increment, 2),
+                'collection_multiplier': round(collection_multiplier, 3),
+                'delivery_multiplier': round(delivery_multiplier, 3),
+                'combined_property_multiplier': round(collection_multiplier * delivery_multiplier, 3)
+            }
+           
             # ========== CALCULATE MILEAGE COST ==========
             distance = float(distance_miles or 0)
             if distance <= 100:
@@ -1999,68 +2140,159 @@ def search_companies_with_cost(
                 remaining_miles = distance - 100
                 cost_remaining = remaining_miles * total_volume_m3 * company_rates['cost_per_mile_over_100']
                 mileage_cost = cost_first_100 + cost_remaining
-            
+           
             # ========== CALCULATE OPTIONAL EXTRAS ==========
+            # PACKING = PERCENTAGE OF INVENTORY COST (from config_manager, not hardcoded)
             packing_cost = 0
-            if include_packing and packing_volume_m3 > 0:
-                # Use packing percentage from config
-                packing_cost = inventory_cost * pricing_config.get('packing_percentage', 0.35)
-            
+            if include_packing:
+                pricing_config = get_config()
+                packing_percentage = pricing_config.get('pricing', {}).get('packing_percentage', 0.35)
+                packing_cost = inventory_cost * packing_percentage
+           
+            # DISMANTLING = Volume × £25 per m³
             dismantling_cost = 0
             if include_dismantling and dismantling_volume_m3 > 0:
-                dismantling_cost = dismantling_volume_m3 * company_rates['disassembly_per_m3']
-            
+                dismantling_cost = dismantling_volume_m3 * company_rates['disassembly_cost_per_m3']
+           
+            # REASSEMBLY = Volume × £50 per m³
             reassembly_cost = 0
             if include_reassembly and reassembly_volume_m3 > 0:
-                reassembly_cost = reassembly_volume_m3 * company_rates['assembly_per_m3']
-            
+                reassembly_cost = reassembly_volume_m3 * company_rates['assembly_cost_per_m3']
+           
             # ========== CALCULATE SUBTOTAL ==========
             subtotal = inventory_cost + mileage_cost + packing_cost + dismantling_cost + reassembly_cost
-            
-            # ========== APPLY MOVE DATE MULTIPLIER - FROM CONFIG ==========
-            notice_multiplier = notice_multipliers_config.get(notice_period, 1.0)
-            day_multiplier = move_day_multipliers_config.get(move_day, 1.0)
-            move_date_multiplier = notice_multiplier * day_multiplier
-            
+           
+            # ========== APPLY MOVE DATE MULTIPLIER ==========
+            # Load multipliers from config_manager (dynamic, not hardcoded)
+            NOTICE_PERIOD_MULTIPLIERS = get_notice_period_multipliers()
+            MOVE_DAY_MULTIPLIERS = get_move_day_multipliers()
+           
+            # Initialize notice period and move day from form defaults (fallback if selected_move_date not provided)
+            notice_period = notice_period or "within_month"
+            move_day = move_day or "sun_to_thurs"
+           
+            # Initialize all multipliers with defaults
+            notice_multiplier = 1.0
+            day_multiplier = 1.0
+            bank_holiday_multiplier = 1.0
+            school_holiday_multiplier = 1.0
+            last_friday_multiplier = 1.0
+            demand_multiplier = 1.0
+           
+            if selected_move_date:
+                try:
+                    from datetime import datetime
+                    move_date_obj = datetime.strptime(selected_move_date, "%Y-%m-%d").date()
+                    # ✅ CRITICAL: Use current_date from frontend (passed as parameter)
+                    # If not provided, fall back to server's current date
+                    if current_date:
+                        if isinstance(current_date, str):
+                            current_date_obj = datetime.strptime(current_date, "%Y-%m-%d").date()
+                        else:
+                            current_date_obj = current_date
+                    else:
+                        current_date_obj = datetime.now().date()
+                   
+                    # ✅ Use exact same notice period multiplier function as calendar_pricing.py
+                    # This ensures both APIs calculate identically
+                    from localmoves.api.calendar_pricing import get_notice_period_multiplier
+                    notice_multiplier, notice_tier = get_notice_period_multiplier(current_date_obj, move_date_obj)
+                   
+                    # Calculate day of week multiplier from actual selected date
+                    day_of_week = move_date_obj.weekday()  # 0=Monday, 4=Friday, 5=Saturday
+                    if day_of_week in [4, 5]:  # Friday or Saturday
+                        move_day = "friday_saturday"
+                    else:
+                        move_day = "sun_to_thurs"
+                   
+                    # Check for bank holiday
+                    bank_holiday = frappe.db.get_value(
+                        "Bank Holiday",
+                        filters={"date": selected_move_date, "is_active": 1},
+                        fieldname=["holiday_name", "multiplier"],
+                        as_dict=True
+                    )
+                    if bank_holiday:
+                        bank_holiday_multiplier = float(bank_holiday.get("multiplier", 1.6))
+                   
+                    # Check for school holiday
+                    school_holidays = frappe.db.sql("""
+                        SELECT holiday_type, multiplier
+                        FROM `tabSchool Holiday`
+                        WHERE is_active = 1
+                        AND %(date)s BETWEEN start_date AND end_date
+                        LIMIT 1
+                    """, {"date": selected_move_date}, as_dict=True)
+                    if school_holidays:
+                        school_holiday_multiplier = float(school_holidays[0].get("multiplier", 1.10))
+                   
+                    # Check for last Friday of month
+                    year = move_date_obj.year
+                    month = move_date_obj.month
+                    last_day = cal.monthrange(year, month)[1]
+                   
+                    # Find all Fridays in the month
+                    fridays = []
+                    for day in range(1, last_day + 1):
+                        check_date = datetime(year, month, day).date()
+                        if check_date.weekday() == 4:  # Friday
+                            fridays.append(check_date)
+                   
+                    # Check if selected date is the last Friday and not a bank holiday
+                    if fridays and move_date_obj == fridays[-1] and not bank_holiday:
+                        last_friday_multiplier = 1.10
+                   
+                    # Check for demand multiplier
+                    booking_data = frappe.db.get_value(
+                        "Daily Booking Count",
+                        selected_move_date,
+                        ["booking_count", "demand_multiplier_active", "demand_multiplier"],
+                        as_dict=True
+                    )
+                    if booking_data and booking_data.get("demand_multiplier_active"):
+                        demand_multiplier = float(booking_data.get("demand_multiplier", 1.0))
+                   
+                except Exception as e:
+                    frappe.log_error(f"Error parsing selected_move_date {selected_move_date}: {str(e)}", "Move Date Parsing")
+                    # Continue with form values if parsing fails
+           
+            day_multiplier = MOVE_DAY_MULTIPLIERS.get(move_day, 1.0)
+           
+            # Apply all multipliers (matching calendar_pricing.py)
+            move_date_multiplier = notice_multiplier * day_multiplier * bank_holiday_multiplier * school_holiday_multiplier * last_friday_multiplier * demand_multiplier
+           
             final_total = subtotal * move_date_multiplier
             date_adjustment = final_total - subtotal
-            
+           
             # ========== ADD PRICING TO COMPANY ==========
             company['exact_pricing'] = {
                 'total_volume_m3': round(total_volume_m3, 2),
                 'distance_miles': distance,
-                
-                'volumes_breakdown': {
-                    'total_volume': round(total_volume_m3, 2),
-                    'packing_volume': round(packing_volume_m3, 2),
-                    'dismantling_volume': round(dismantling_volume_m3, 2),
-                    'reassembly_volume': round(reassembly_volume_m3, 2)
-                },
-                
+               
                 'collection_increment': round(collection_increment, 3),
-                'collection_multiplier': round(collection_multiplier, 3),
                 'delivery_increment': round(delivery_increment, 3),
+                'collection_multiplier': round(collection_multiplier, 3),
                 'delivery_multiplier': round(delivery_multiplier, 3),
                 'combined_property_multiplier': round(collection_multiplier * delivery_multiplier, 3),
-                
+               
+                'loading_cost': round(base_inventory, 2),
                 'inventory_cost': round(inventory_cost, 2),
                 'mileage_cost': round(mileage_cost, 2),
-                
+                'parking_cost': 0,
+                'access_cost': 0,
+               
                 'packing_cost': round(packing_cost, 2),
-                'packing_formula': f"Inventory (£{round(inventory_cost, 2)}) × {int(pricing_config.get('packing_percentage', 0.35) * 100)}% = £{round(packing_cost, 2)}",
-                
+                'packing_formula': f"Inventory Cost (£{round(inventory_cost, 2)}) × 35% = £{round(packing_cost, 2)}",
+               
                 'dismantling_cost': round(dismantling_cost, 2),
-                'dismantling_formula': f"{round(dismantling_volume_m3, 2)}m³ × £{company_rates['disassembly_per_m3']}/m³ = £{round(dismantling_cost, 2)}",
-                
                 'reassembly_cost': round(reassembly_cost, 2),
-                'reassembly_formula': f"{round(reassembly_volume_m3, 2)}m³ × £{company_rates['assembly_per_m3']}/m³ = £{round(reassembly_cost, 2)}",
-                
+               
                 'subtotal_before_date': round(subtotal, 2),
                 'move_date_multiplier': round(move_date_multiplier, 3),
                 'date_adjustment': round(date_adjustment, 2),
-                
+               
                 'final_total': round(final_total, 2),
-                
+               
                 'breakdown': {
                     'inventory': round(inventory_cost, 2),
                     'mileage': round(mileage_cost, 2),
@@ -2069,52 +2301,181 @@ def search_companies_with_cost(
                     'reassembly': round(reassembly_cost, 2),
                     'date_adjustment': round(date_adjustment, 2)
                 },
-                
-                'config_source': 'system_configuration',
+               
+                'volumes_used': {
+                    'total_volume_m3': round(total_volume_m3, 2),
+                    'dismantling_volume_m3': round(dismantling_volume_m3, 2),
+                    'reassembly_volume_m3': round(reassembly_volume_m3, 2)
+                },
+               
                 'formula_notes': {
                     'property_assessment': 'ADDITIVE (1.0 + increments)',
-                    'packing': f"{int(pricing_config.get('packing_percentage', 0.35) * 100)}% of Inventory Cost (from config)",
-                    'assembly_disassembly': 'Per m³ of items (from config)',
-                    'all_constants': 'Loaded dynamically from System Configuration'
+                    'packing': '35% of Inventory Cost',
+                    'assembly_disassembly': 'Per m³ of items'
                 }
             }
+           
+            # ========== ADD ITEM-LEVEL PACKING COSTS ==========
+            # Calculate packing cost per item (35% of inventory cost, distributed by volume)
+            if include_packing and packing_cost > 0 and total_volume_m3 > 0:
+                packing_cost_per_m3 = packing_cost / total_volume_m3
+                
+                # Update item_details with packing costs
+                for item in item_details:
+                    item_packing_cost = item['total_volume'] * packing_cost_per_m3
+                    item['packing_cost_per_item'] = round(packing_cost_per_m3, 2)
+                    item['total_packing_cost'] = round(item_packing_cost, 2)
             
+            # Add item details with packing breakdown
+            company['exact_pricing']['item_details'] = item_details
+           
             company['pricing_rates'] = company_rates
-            
-            # Add subscription info - from config
-            plan = company.get('subscription_plan', 'Free')
-            viewed = int(company.get('requests_viewed_this_month', 0) or 0)
-            plan_limits_config = get_plan_limits()
-            limit = plan_limits_config.get(plan, 5)
-            
-            company['subscription_info'] = {
-                'plan': plan,
-                'views_used': viewed,
-                'views_limit': limit if limit != -1 else 'Unlimited',
-                'views_remaining': (limit - viewed) if limit != -1 else 'Unlimited'
-            }
-            
+           
+            # ========== COMMENTED OUT: Subscription info ==========
+            # Add subscription info
+            # plan = company.get('leads_plan', 'Leads_Starter')
+            # viewed = int(company.get('leads_viewed_this_month', 0) or 0)
+           
+            # # Get limit from PLAN_PRICING
+            # from localmoves.api.payment import PLAN_PRICING
+            # plan_details = PLAN_PRICING.get(plan, {})
+            # limit = plan_details.get("features", {}).get("leads_per_month", 0)
+           
+            # company['subscription_info'] = {
+            #     'plan': plan,
+            #     'views_used': viewed,
+            #     'views_limit': limit if limit != -1 else 'Unlimited',
+            #     'views_remaining': (limit - viewed) if limit != -1 else 'Unlimited'
+            # }
+            # ======================================================
+           
+            # Add calendar pricing for the next 6 months (dynamic pricing based on selected_move_date)
+            # After calculating company['exact_pricing']
+            try:
+                from localmoves.api.calendar_pricing import get_price_calendar
+                from datetime import datetime as datetime_class
+                
+                current_date_obj = datetime_class.strptime(current_date, "%Y-%m-%d").date() if isinstance(current_date, str) else current_date
+                
+                # Get the month and year from selected_move_date
+                if selected_move_date:
+                    try:
+                        selected_date_obj = datetime_class.strptime(selected_move_date, "%Y-%m-%d").date() if isinstance(selected_move_date, str) else selected_move_date
+                        month = selected_date_obj.month
+                        year = selected_date_obj.year
+                    except Exception as date_parse_error:
+                        frappe.log_error(f"Failed to parse selected_move_date '{selected_move_date}': {str(date_parse_error)}", "Calendar Pricing - Date Parse")
+                        month = current_date_obj.month
+                        year = current_date_obj.year
+                else:
+                    month = current_date_obj.month
+                    year = current_date_obj.year
+                
+                # Build calendar parameters - ENSURE NO EMPTY STRINGS (replace with None)
+                calendar_params = {
+                    'base_price': company['exact_pricing']['loading_cost'],
+                    'month': month,
+                    'year': year,
+                    'current_date': current_date,
+                    'collection_parking': collection_parking if collection_parking else None,
+                    'collection_parking_distance': collection_parking_distance if collection_parking_distance else None,
+                    'collection_house_type': collection_house_type if collection_house_type else None,
+                    'collection_internal_access': collection_internal_access if collection_internal_access else None,
+                    'collection_floor_level': collection_floor_level if collection_floor_level else None,
+                    'delivery_parking': delivery_parking if delivery_parking else None,
+                    'delivery_parking_distance': delivery_parking_distance if delivery_parking_distance else None,
+                    'delivery_house_type': delivery_house_type if delivery_house_type else None,
+                    'delivery_internal_access': delivery_internal_access if delivery_internal_access else None,
+                    'delivery_floor_level': delivery_floor_level if delivery_floor_level else None
+                }
+                
+                frappe.logger().info(f"Calling get_price_calendar with params: {calendar_params}")
+                
+                # Get calendar pricing for the selected month using the same base_price as this company
+                calendar_response = get_price_calendar(**calendar_params)
+                
+                frappe.logger().info(f"Calendar response: {calendar_response}")
+                
+                if calendar_response and calendar_response.get('success'):
+                    company['calendar_pricing'] = {
+                        'base_price': calendar_response.get('base_price'),
+                        'all_dates': calendar_response.get('calendar', []),
+                        'cheapest_day': calendar_response.get('cheapest_day'),
+                        'most_expensive_day': calendar_response.get('most_expensive_day'),
+                        'date_range': {
+                            'month': month,
+                            'year': year
+                        }
+                    }
+                else:
+                    error_msg = calendar_response.get('message', 'Unknown error') if calendar_response else 'No response'
+                    company['calendar_pricing'] = {
+                        'base_price': company['exact_pricing']['final_total'],
+                        'all_dates': [],
+                        'cheapest_day': None,
+                        'most_expensive_day': None,
+                        'error': f'Calendar pricing unavailable: {error_msg}'
+                    }
+            except Exception as e:
+                import traceback
+                error_trace = traceback.format_exc()
+                frappe.log_error(f"Calendar pricing exception for {company.get('company_name')}:\n{error_trace}", "Calendar Pricing Exception")
+                company['calendar_pricing'] = {
+                    'base_price': company['exact_pricing']['final_total'],
+                    'all_dates': [],
+                    'cheapest_day': None,
+                    'most_expensive_day': None,
+                    'error': f'Calendar pricing error: {str(e)}'
+                }
+
             available_companies.append(company)
-        
+       
         # Sort by final total
         available_companies.sort(key=lambda x: x['exact_pricing']['final_total'])
-        
+       
+        # ========== COMMENTED OUT: Subscription exhaustion check ==========
+        # CRITICAL: Check if ANY company has exhausted their subscription
+        # Add warning to response if applicable
+        # exhausted_companies = []
+        # for company in available_companies:
+        #     plan = company.get('leads_plan', 'Leads_Starter')
+        #     viewed = int(company.get('leads_viewed_this_month', 0) or 0)
+        #     from localmoves.api.payment import PLAN_PRICING
+        #     plan_details = PLAN_PRICING.get(plan, {})
+           
+        #     if plan.startswith('Jobs_'):
+        #         limit = plan_details.get("features", {}).get("jobs_per_month", -1)
+        #     else:
+        #         limit = plan_details.get("features", {}).get("leads_per_month", 0)
+           
+        #     if limit > 0 and viewed >= limit:
+        #         exhausted_companies.append({
+        #             "company_name": company.get('company_name'),
+        #             "plan": plan,
+        #             "limit": limit,
+        #             "viewed": viewed
+        #         })
+        # ==================================================================
+       
         result = {
             "success": True,
             "count": len(available_companies),
             "total_companies": len(companies),
             "filtered_out": len(companies) - len(available_companies),
+            "filtered_companies_debug": filtered_reasons if filtered_reasons else [],
             "data": available_companies,
+            # ========== COMMENTED OUT: Subscription warning ==========
+            # "subscription_warning": {
+            #     "has_exhausted": len(exhausted_companies) > 0,
+            #     "exhausted_companies": exhausted_companies,
+            #     "message": f"{len(exhausted_companies)} company(ies) have reached their monthly subscription limit and cannot accept more bookings this month." if exhausted_companies else None
+            # },
+            # =========================================================
             "search_parameters": {
                 "pincode": pincode,
-                "total_volume_m3": round(total_volume_m3, 2),
-                "dismantling_volume_m3": round(dismantling_volume_m3, 2),
-                "reassembly_volume_m3": round(reassembly_volume_m3, 2),
-                "packing_volume_m3": round(packing_volume_m3, 2),
-                "item_details": item_details,
-                "missing_items": missing_items,
                 "property_type": property_type,
                 "property_size": property_size,
+                "total_volume_m3": round(total_volume_m3, 2),
                 "distance_miles": distance_miles,
                 "pickup_address": pickup_address,
                 "pickup_city": pickup_city,
@@ -2122,44 +2483,27 @@ def search_companies_with_cost(
                 "delivery_city": delivery_city,
                 "additional_spaces": additional_spaces,
                 "quantity": quantity,
+                "item_details": item_details,
                 "optional_extras": {
                     "packing": include_packing,
                     "dismantling": include_dismantling,
                     "reassembly": include_reassembly
                 },
                 "move_date": {
+                    "selected_move_date": selected_move_date,
                     "notice_period": notice_period,
                     "move_day": move_day,
                     "collection_time": collection_time
                 }
             },
-            "pricing_note": "All constants loaded dynamically from System Configuration via config_manager.py",
-            "config_info": {
-                "source": "System Configuration DocType",
-                "editable_via": "Admin Dashboard",
-                "constants_used": [
-                    "additional_spaces",
-                    "property_volumes",
-                    "quantity_multipliers",
-                    "collection_assessment",
-                    "notice_period_multipliers",
-                    "move_day_multipliers",
-                    "pricing_config",
-                    "plan_limits"
-                ]
-            },
-            "warnings": []
+            "pricing_note": "Pricing aligned with request_pricing.py spreadsheet formula",
+            "formula_changes": {
+                "property_assessment": "Changed from MULTIPLICATIVE to ADDITIVE (1.0 + increments)",
+                "packing": "Changed from per-volume to 35% of Inventory Cost",
+                "additional_spaces": "Updated to correct values (shed=8, loft=12, etc.)"
+            }
         }
-        
-        # Add warnings if items were missing
-        if missing_items:
-            result["warnings"].append({
-                "type": "missing_items",
-                "message": f"{len(missing_items)} inventory items not found in database",
-                "items": missing_items,
-                "suggestion": "Calculation fell back to property-based volume estimation" if total_volume_m3 > 0 else "Please check item names"
-            })
-        
+       
         # Send email if requested
         if send_email and user_email:
             try:
@@ -2172,17 +2516,19 @@ def search_companies_with_cost(
             except Exception as email_error:
                 result['email_sent'] = False
                 result['email_message'] = f"Email failed: {str(email_error)}"
-        
+       
         return result
-    
+   
     except Exception as e:
         import traceback
-        error_trace = traceback.format_exc()
-        safe_log("Search with Exact Cost Error", error_trace[:2000])
+        error_details = traceback.format_exc()
+        frappe.log_error(f"Search with Exact Cost Error: {str(e)}\n{error_details}", "Exact Cost Calculation")
         frappe.local.response['http_status_code'] = 500
-        return {"success": False, "message": f"Failed to search companies: {str(e)}"}
-    
-    
+        return {
+            "success": False,
+            "message": f"Failed to search companies: {str(e)}",
+            "error_details": error_details if frappe.conf.get('developer_mode') else None
+        }    
     
 # Helper functions for box calculation
 def is_box_item(item_name):
