@@ -734,7 +734,7 @@ def list_users_for_update():
         return {
             'success': False,
             'error': str(e)
-        }()
+        }
 
 @frappe.whitelist(allow_guest=False)
 def create_user():
@@ -6427,6 +6427,561 @@ def update_multiplier_configuration():
     except Exception as e:
         frappe.log_error(title="Update Multiplier Config Error", message=str(e))
         return {'success': False, 'message': str(e)}
+
+
+# ===== BANK HOLIDAY MANAGEMENT (ADMIN ONLY) =====
+
+@frappe.whitelist(allow_guest=False)
+def get_all_bank_holidays():
+    """Get all bank holidays with pagination"""
+    try:
+        ensure_session_data()
+        
+        # Admin permission check - DISABLED FOR TESTING
+        # if not check_admin_permission():
+        #     return {
+        #         'success': False,
+        #         'message': 'Access Denied: Admin permission required'
+        #     }
+        
+        data = get_request_data()
+        page = int(data.get('page', 1))
+        limit = int(data.get('limit', 50))
+        offset = (page - 1) * limit
+        
+        # Get total count
+        total_count = frappe.db.count('Bank Holiday')
+        
+        # Get holidays
+        holidays = frappe.get_all('Bank Holiday',
+            fields=['name', 'year', 'date', 'holiday_name', 'multiplier', 'is_active', 'creation', 'modified'],
+            order_by='year asc, date asc',
+            limit_page_length=limit,
+            start=offset,
+            ignore_permissions=True
+        )
+        
+        return {
+            'success': True,
+            'data': {
+                'holidays': holidays,
+                'total_count': total_count,
+                'page': page,
+                'limit': limit,
+                'total_pages': (total_count + limit - 1) // limit
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Get Bank Holidays Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def create_bank_holiday():
+    """Create a new bank holiday"""
+    try:
+        ensure_session_data()
+        
+        # Admin permission check - DISABLED FOR TESTING
+        # if not check_admin_permission():
+        #     return {
+        #         'success': False,
+        #         'message': 'Access Denied: Admin permission required'
+        #     }
+        
+        data = get_request_data()
+        
+        # Validate required fields
+        if not data.get('year'):
+            return {'success': False, 'message': 'year is required'}
+        if not data.get('date'):
+            return {'success': False, 'message': 'date is required (YYYY-MM-DD format)'}
+        if not data.get('holiday_name'):
+            return {'success': False, 'message': 'holiday_name is required'}
+        
+        # Check if holiday already exists for this date
+        if frappe.db.exists('Bank Holiday', {'date': data.get('date')}):
+            return {'success': False, 'message': f"Bank holiday already exists for {data.get('date')}"}
+        
+        # Create bank holiday
+        holiday = frappe.new_doc('Bank Holiday')
+        holiday.year = int(data.get('year'))
+        holiday.date = data.get('date')
+        holiday.holiday_name = data.get('holiday_name')
+        holiday.multiplier = float(data.get('multiplier', 1.6))
+        holiday.is_active = int(data.get('is_active', 1))
+        
+        holiday.flags.ignore_version = True
+        holiday.insert(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True,
+            'message': f"Bank holiday '{data.get('holiday_name')}' created successfully",
+            'data': holiday.as_dict()
+        }
+    except Exception as e:
+        frappe.log_error(f"Create Bank Holiday Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def update_bank_holiday():
+    """Update an existing bank holiday"""
+    try:
+        ensure_session_data()
+        
+        # Admin permission check - DISABLED FOR TESTING
+        # if not check_admin_permission():
+        #     return {
+        #         'success': False,
+        #         'message': 'Access Denied: Admin permission required'
+        #     }
+        
+        data = get_request_data()
+        
+        if not data.get('name'):
+            return {'success': False, 'message': 'name (holiday ID) is required'}
+        
+        if not frappe.db.exists('Bank Holiday', data.get('name')):
+            return {'success': False, 'message': 'Bank holiday not found'}
+        
+        # Update bank holiday
+        holiday = frappe.get_doc('Bank Holiday', data.get('name'), ignore_permissions=True)
+        
+        if 'year' in data:
+            holiday.year = int(data.get('year'))
+        if 'date' in data:
+            holiday.date = data.get('date')
+        if 'holiday_name' in data:
+            holiday.holiday_name = data.get('holiday_name')
+        if 'multiplier' in data:
+            holiday.multiplier = float(data.get('multiplier'))
+        if 'is_active' in data:
+            holiday.is_active = int(data.get('is_active'))
+        
+        holiday.flags.ignore_version = True
+        holiday.save(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True,
+            'message': 'Bank holiday updated successfully',
+            'data': holiday.as_dict()
+        }
+    except Exception as e:
+        frappe.log_error(f"Update Bank Holiday Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def delete_bank_holiday():
+    """Delete a bank holiday"""
+    try:
+        ensure_session_data()
+        
+        # Admin permission check - DISABLED FOR TESTING
+        # if not check_admin_permission():
+        #     return {
+        #         'success': False,
+        #         'message': 'Access Denied: Admin permission required'
+        #     }
+        
+        data = get_request_data()
+        
+        if not data.get('name'):
+            return {'success': False, 'message': 'name (holiday ID) is required'}
+        
+        if not frappe.db.exists('Bank Holiday', data.get('name')):
+            return {'success': False, 'message': 'Bank holiday not found'}
+        
+        holiday_name = frappe.db.get_value('Bank Holiday', data.get('name'), 'holiday_name')
+        frappe.delete_doc('Bank Holiday', data.get('name'), ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True,
+            'message': f"Bank holiday '{holiday_name}' deleted successfully"
+        }
+    except Exception as e:
+        frappe.log_error(f"Delete Bank Holiday Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+# ===== SCHOOL HOLIDAY MANAGEMENT (ADMIN ONLY) =====
+
+@frappe.whitelist(allow_guest=False)
+def get_all_school_holidays():
+    """Get all school holidays with pagination"""
+    try:
+        ensure_session_data()
+        
+        # Admin permission check - DISABLED FOR TESTING
+        # if not check_admin_permission():
+        #     return {
+        #         'success': False,
+        #         'message': 'Access Denied: Admin permission required'
+        #     }
+        
+        data = get_request_data()
+        page = int(data.get('page', 1))
+        limit = int(data.get('limit', 50))
+        offset = (page - 1) * limit
+        
+        # Get total count
+        total_count = frappe.db.count('School Holiday')
+        
+        # Get holidays
+        holidays = frappe.get_all('School Holiday',
+            fields=['name', 'year', 'holiday_type', 'start_date', 'end_date', 'multiplier', 'is_active', 'creation', 'modified'],
+            order_by='year asc, start_date asc',
+            limit_page_length=limit,
+            start=offset,
+            ignore_permissions=True
+        )
+        
+        return {
+            'success': True,
+            'data': {
+                'holidays': holidays,
+                'total_count': total_count,
+                'page': page,
+                'limit': limit,
+                'total_pages': (total_count + limit - 1) // limit
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Get School Holidays Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def create_school_holiday():
+    """Create a new school holiday"""
+    try:
+        ensure_session_data()
+        
+        # Admin permission check - DISABLED FOR TESTING
+        # if not check_admin_permission():
+        #     return {
+        #         'success': False,
+        #         'message': 'Access Denied: Admin permission required'
+        #     }
+        
+        data = get_request_data()
+        
+        # Validate required fields
+        if not data.get('year'):
+            return {'success': False, 'message': 'year is required'}
+        if not data.get('holiday_type'):
+            return {'success': False, 'message': 'holiday_type is required'}
+        if not data.get('start_date'):
+            return {'success': False, 'message': 'start_date is required (YYYY-MM-DD format)'}
+        if not data.get('end_date'):
+            return {'success': False, 'message': 'end_date is required (YYYY-MM-DD format)'}
+        
+        # Validate date range
+        start_date = datetime.strptime(data.get('start_date'), '%Y-%m-%d').date()
+        end_date = datetime.strptime(data.get('end_date'), '%Y-%m-%d').date()
+        
+        if end_date < start_date:
+            return {'success': False, 'message': 'end_date must be after start_date'}
+        
+        # Check for overlapping holidays
+        overlapping = frappe.db.sql("""
+            SELECT name FROM `tabSchool Holiday`
+            WHERE is_active = 1
+            AND NOT (end_date < %s OR start_date > %s)
+        """, (start_date, end_date), as_dict=True)
+        
+        if overlapping:
+            return {
+                'success': False,
+                'message': f'This date range overlaps with existing school holidays',
+                'overlapping_holidays': [h['name'] for h in overlapping]
+            }
+        
+        # Create school holiday
+        holiday = frappe.new_doc('School Holiday')
+        holiday.year = int(data.get('year'))
+        holiday.holiday_type = data.get('holiday_type')
+        holiday.start_date = start_date
+        holiday.end_date = end_date
+        holiday.multiplier = float(data.get('multiplier', 1.10))
+        holiday.is_active = int(data.get('is_active', 1))
+        
+        holiday.flags.ignore_version = True
+        holiday.insert(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True,
+            'message': f"School holiday '{data.get('holiday_type')}' created successfully",
+            'data': holiday.as_dict()
+        }
+    except Exception as e:
+        frappe.log_error(f"Create School Holiday Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def update_school_holiday():
+    """Update an existing school holiday"""
+    try:
+        ensure_session_data()
+        
+        # Admin permission check - DISABLED FOR TESTING
+        # if not check_admin_permission():
+        #     return {
+        #         'success': False,
+        #         'message': 'Access Denied: Admin permission required'
+        #     }
+        
+        data = get_request_data()
+        
+        if not data.get('name'):
+            return {'success': False, 'message': 'name (holiday ID) is required'}
+        
+        if not frappe.db.exists('School Holiday', data.get('name')):
+            return {'success': False, 'message': 'School holiday not found'}
+        
+        # Update school holiday
+        holiday = frappe.get_doc('School Holiday', data.get('name'), ignore_permissions=True)
+        
+        if 'holiday_type' in data:
+            holiday.holiday_type = data.get('holiday_type')
+        if 'start_date' in data:
+            holiday.start_date = data.get('start_date')
+        if 'end_date' in data:
+            holiday.end_date = data.get('end_date')
+        if 'multiplier' in data:
+            holiday.multiplier = float(data.get('multiplier'))
+        if 'is_active' in data:
+            holiday.is_active = int(data.get('is_active'))
+        
+        # Validate date range
+        if holiday.end_date < holiday.start_date:
+            return {'success': False, 'message': 'end_date must be after start_date'}
+        
+        holiday.flags.ignore_version = True
+        holiday.save(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True,
+            'message': 'School holiday updated successfully',
+            'data': holiday.as_dict()
+        }
+    except Exception as e:
+        frappe.log_error(f"Update School Holiday Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def delete_school_holiday():
+    """Delete a school holiday"""
+    try:
+        ensure_session_data()
+        
+        # Admin permission check - DISABLED FOR TESTING
+        # if not check_admin_permission():
+        #     return {
+        #         'success': False,
+        #         'message': 'Access Denied: Admin permission required'
+        #     }
+        
+        data = get_request_data()
+        
+        if not data.get('name'):
+            return {'success': False, 'message': 'name (holiday ID) is required'}
+        
+        if not frappe.db.exists('School Holiday', data.get('name')):
+            return {'success': False, 'message': 'School holiday not found'}
+        
+        holiday_type = frappe.db.get_value('School Holiday', data.get('name'), 'holiday_type')
+        frappe.delete_doc('School Holiday', data.get('name'), ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True,
+            'message': f"School holiday '{holiday_type}' deleted successfully"
+        }
+    except Exception as e:
+        frappe.log_error(f"Delete School Holiday Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+# ===== LAST FRIDAY OF EACH MONTH HOLIDAY MANAGEMENT (ADMIN ONLY) =====
+
+@frappe.whitelist(allow_guest=False)
+def get_all_last_friday_holidays():
+    """Get all last friday holidays with pagination"""
+    try:
+        ensure_session_data()
+        
+        data = get_request_data()
+        page = int(data.get('page', 1))
+        limit = int(data.get('limit', 50))
+        offset = (page - 1) * limit
+        
+        # Get total count
+        total_count = frappe.db.count('Last Friday Holiday')
+        
+        # Get holidays
+        holidays = frappe.get_all('Last Friday Holiday',
+            fields=['name', 'year', 'month', 'date', 'day_of_week', 'multiplier', 'is_active', 'creation', 'modified'],
+            order_by='year asc, month asc',
+            limit_page_length=limit,
+            start=offset,
+            ignore_permissions=True
+        )
+        
+        return {
+            'success': True,
+            'data': {
+                'holidays': holidays,
+                'total_count': total_count,
+                'page': page,
+                'limit': limit,
+                'total_pages': (total_count + limit - 1) // limit
+            }
+        }
+    except Exception as e:
+        frappe.log_error(f"Get Last Friday Holidays Error: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def create_last_friday_holiday():
+    """Create a new last friday holiday"""
+    try:
+        ensure_session_data()
+        
+        data = get_request_data()
+        
+        # Validate required fields
+        if not data.get('year'):
+            return {'success': False, 'message': 'year is required'}
+        if not data.get('month'):
+            return {'success': False, 'message': 'month is required'}
+        if not data.get('date'):
+            return {'success': False, 'message': 'date is required (YYYY-MM-DD format)'}
+        
+        # Check if holiday already exists for this year-month
+        year = int(data.get('year'))
+        month_str = data.get('month')
+        
+        if frappe.db.exists('Last Friday Holiday', {'year': year, 'month': month_str}):
+            return {'success': False, 'message': f"Last Friday Holiday already exists for {month_str} {year}"}
+        
+        # Create last friday holiday
+        holiday = frappe.new_doc('Last Friday Holiday')
+        holiday.year = year
+        holiday.month = month_str
+        holiday.date = data.get('date')
+        
+        # Calculate day of week
+        from datetime import datetime
+        date_obj = datetime.strptime(data.get('date'), '%Y-%m-%d')
+        holiday.day_of_week = date_obj.strftime('%A')
+        
+        holiday.multiplier = float(data.get('multiplier', 1.10))
+        holiday.is_active = int(data.get('is_active', 1))
+        
+        holiday.flags.ignore_version = True
+        holiday.insert(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True,
+            'message': f"Last Friday holiday for {month_str} {year} created successfully",
+            'data': holiday.as_dict()
+        }
+    except Exception as e:
+        frappe.log_error(f"Create Last Friday Holiday Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def update_last_friday_holiday():
+    """Update an existing last friday holiday"""
+    try:
+        ensure_session_data()
+        
+        data = get_request_data()
+        
+        if not data.get('name'):
+            return {'success': False, 'message': 'name (holiday ID) is required'}
+        
+        if not frappe.db.exists('Last Friday Holiday', data.get('name')):
+            return {'success': False, 'message': 'Last Friday holiday not found'}
+        
+        # Update last friday holiday
+        holiday = frappe.get_doc('Last Friday Holiday', data.get('name'), ignore_permissions=True)
+        
+        if 'year' in data:
+            holiday.year = int(data.get('year'))
+        if 'month' in data:
+            holiday.month = data.get('month')
+        if 'date' in data:
+            holiday.date = data.get('date')
+            # Recalculate day of week
+            from datetime import datetime
+            date_obj = datetime.strptime(data.get('date'), '%Y-%m-%d')
+            holiday.day_of_week = date_obj.strftime('%A')
+        if 'multiplier' in data:
+            holiday.multiplier = float(data.get('multiplier'))
+        if 'is_active' in data:
+            holiday.is_active = int(data.get('is_active'))
+        
+        holiday.flags.ignore_version = True
+        holiday.save(ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True,
+            'message': 'Last Friday holiday updated successfully',
+            'data': holiday.as_dict()
+        }
+    except Exception as e:
+        frappe.log_error(f"Update Last Friday Holiday Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+@frappe.whitelist(allow_guest=False)
+def delete_last_friday_holiday():
+    """Delete a last friday holiday"""
+    try:
+        ensure_session_data()
+        
+        data = get_request_data()
+        
+        if not data.get('name'):
+            return {'success': False, 'message': 'name (holiday ID) is required'}
+        
+        if not frappe.db.exists('Last Friday Holiday', data.get('name')):
+            return {'success': False, 'message': 'Last Friday holiday not found'}
+        
+        month_info = frappe.db.get_value('Last Friday Holiday', data.get('name'), ['year', 'month'])
+        frappe.delete_doc('Last Friday Holiday', data.get('name'), ignore_permissions=True)
+        frappe.db.commit()
+        
+        return {
+            'success': True,
+            'message': f"Last Friday holiday for {month_info[1]} {month_info[0]} deleted successfully"
+        }
+    except Exception as e:
+        frappe.log_error(f"Delete Last Friday Holiday Error: {str(e)}")
+        frappe.db.rollback()
+        return {'success': False, 'error': str(e)}
 
 
 

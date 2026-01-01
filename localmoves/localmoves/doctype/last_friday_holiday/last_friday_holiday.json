@@ -1,18 +1,18 @@
 {
     "actions": [],
     "allow_rename": 0,
-    "autoname": "format:BH-{YYYY}-{#####}",
-    "creation": "2025-12-18 11:30:00.000000",
+    "autoname": "format:LFH-{YYYY}-{#####}",
+    "creation": "2026-01-01 00:00:00.000000",
     "doctype": "DocType",
     "editable_grid": 1,
     "engine": "InnoDB",
     "field_order": [
         "holiday_details_section",
         "year",
+        "month",
         "date",
         "day_of_week",
         "column_break_4",
-        "holiday_name",
         "multiplier",
         "is_active",
         "section_break_timestamps",
@@ -30,6 +30,14 @@
             "fieldtype": "Int",
             "in_list_view": 1,
             "label": "Year",
+            "reqd": 1
+        },
+        {
+            "fieldname": "month",
+            "fieldtype": "Select",
+            "in_list_view": 1,
+            "label": "Month",
+            "options": "January\nFebruary\nMarch\nApril\nMay\nJune\nJuly\nAugust\nSeptember\nOctober\nNovember\nDecember",
             "reqd": 1
         },
         {
@@ -51,21 +59,14 @@
             "fieldtype": "Column Break"
         },
         {
-            "fieldname": "holiday_name",
-            "fieldtype": "Data",
-            "in_list_view": 1,
-            "label": "Holiday Name",
-            "reqd": 1
-        },
-        {
-            "default": "1.6",
+            "default": "1.10",
             "fieldname": "multiplier",
             "fieldtype": "Float",
             "in_list_view": 1,
             "label": "Price Multiplier",
             "precision": "2",
             "reqd": 1,
-            "description": "Multiplier applied to base price (e.g., 1.6 = 60% increase)"
+            "description": "Multiplier applied to base price on last Friday of month (e.g., 1.10 = 10% increase)"
         },
         {
             "default": "1",
@@ -93,10 +94,10 @@
     ],
     "index_web_pages_for_search": 1,
     "links": [],
-    "modified": "2025-12-18 11:30:00.000000",
+    "modified": "2026-01-01 00:00:00.000000",
     "modified_by": "Administrator",
     "module": "Localmoves",
-    "name": "Bank Holiday",
+    "name": "Last Friday Holiday",
     "naming_rule": "Expression",
     "owner": "Administrator",
     "permissions": [
@@ -108,7 +109,7 @@
             "print": 1,
             "read": 1,
             "report": 1,
-            "role": "System Manager",
+            "role": "Administrator",
             "share": 1,
             "write": 1
         },
@@ -120,13 +121,13 @@
             "print": 1,
             "read": 1,
             "report": 1,
-            "role": "Administrator",
+            "role": "System Manager",
             "share": 1,
             "write": 1
         }
     ],
-    "sort_field": "date",
-    "sort_order": "ASC",
-    "states": [],
+    "quick_entry": 1,
+    "sort_field": "modified",
+    "sort_order": "DESC",
     "track_changes": 1
 }

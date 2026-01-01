@@ -1,0 +1,1 @@
+localmoves.patches.populate_last_friday_holidays

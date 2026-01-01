@@ -35,10 +35,9 @@
         },
         {
             "fieldname": "holiday_type",
-            "fieldtype": "Select",
+            "fieldtype": "Data",
             "in_list_view": 1,
             "label": "Holiday Type",
-            "options": "Spring Half Term\nEaster Holiday\nSummer Half Term\nSummer Holiday\nAutumn Half Term\nChristmas Holiday",
             "reqd": 1
         },
         {
@@ -110,6 +109,18 @@
             "read": 1,
             "report": 1,
             "role": "System Manager",
+            "share": 1,
+            "write": 1
+        },
+        {
+            "create": 1,
+            "delete": 1,
+            "email": 1,
+            "export": 1,
+            "print": 1,
+            "read": 1,
+            "report": 1,
+            "role": "Administrator",
             "share": 1,
             "write": 1
         }
